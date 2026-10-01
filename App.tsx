@@ -373,6 +373,29 @@ function DayPage() {
       if (underWay) update.end_time = timeOf(now)
       const { error } = await supabase.from(table).update(update).eq('id', item.id)
       if (error) return setError(error.message)
+      // Ending early frees the rest of its slot, so the day's later todos and
+      // habits that aren't done move up by the same amount.
+      if (underWay) {
+        const delta = now - item.end
+        const later = items.filter(
+          (it) =>
+            it.id !== item.id &&
+            it.kind === 'block' &&
+            !it.done &&
+            (it.source === 'app' || it.source === 'habit') &&
+            it.start >= item.end - 1e-6,
+        )
+        const results = await Promise.all(
+          later.map((it) =>
+            supabase
+              .from('cass_time_blocks')
+              .update({ start_time: timeOf(it.start + delta), end_time: timeOf(it.end + delta) })
+              .eq('id', it.id),
+          ),
+        )
+        const failed = results.find((r) => r.error)
+        if (failed?.error) setError(failed.error.message)
+      }
       return load()
     }
     const length = item.end - item.start
@@ -834,16 +857,19 @@ function DayGrid({
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
   const visible = items.filter((it) => it.end > first && it.start < last)
 
-  // Blocks under 30 minutes, and blocks done early, take half the column. Back to
-  // back half blocks alternate halves so they don't overlap.
+  // Blocks under 30 minutes, and blocks done early, take half the column. A block
+  // that a half block's minimum height spills into takes the other half.
   const [gridWidth, setGridWidth] = useState(0)
   const column = Math.max(0, gridWidth - EVENT_LEFT - EVENT_RIGHT)
   const side = new Map<string, 'left' | 'right'>()
-  let prevShort: { bottom: number; side: 'left' | 'right' } | null = null
+  type Half = { bottom: number; side: 'left' | 'right' }
+  let prevShort = null as Half | null
   for (const it of visible) {
-    if (it.end - it.start >= 0.5 && !it.doneEarly) continue
     const t = top(it.start) + 1
-    const s: 'left' | 'right' = prevShort && prevShort.bottom > t && prevShort.side === 'left' ? 'right' : 'left'
+    const prev = prevShort
+    const overlapsPrev: boolean = prev !== null && prev.bottom > t
+    if (it.end - it.start >= 0.5 && !it.doneEarly && !overlapsPrev) continue
+    const s: 'left' | 'right' = overlapsPrev && prev?.side === 'left' ? 'right' : 'left'
     side.set(it.id, s)
     prevShort = { bottom: Math.max(t + SHORT_MIN_PX, top(it.end) - 1), side: s }
   }
