@@ -19,11 +19,23 @@ import type { Session } from '@supabase/supabase-js'
 import { ChevronLeft, ChevronRight, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
 import { supabase } from './src/supabase'
 
-type CalItem = { id: string; title: string; start: number; end: number; kind: 'block' | 'task'; done: boolean }
+type CalItem = {
+  id: string
+  title: string
+  start: number
+  end: number
+  kind: 'block' | 'task'
+  done: boolean
+  habitId?: string | null
+}
 type Status = 'done' | 'not_started' | 'follow_up'
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
+const EVENT_LEFT = 52
+const EVENT_RIGHT = 6
+// A short block is at least this tall so its title stays readable
+const SHORT_MIN_PX = 20
 // Today's grid shows this many hours before and after now
 const LOOKBACK_HOURS = 3
 const LOOKAHEAD_HOURS = 5
@@ -72,6 +84,23 @@ function timeOf(hours: number) {
   const h = Math.floor(hours)
   const m = Math.round((hours - h) * 60)
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
+}
+
+function nextQuarterHour() {
+  const now = new Date()
+  return Math.ceil((now.getHours() + now.getMinutes() / 60) * 4) / 4
+}
+
+// The first gap at or after `from` that fits `length` hours between the day's
+// blocks, or null if nothing fits before midnight.
+function freeSlot(items: CalItem[], from: number, length: number) {
+  let cursor = from
+  for (const it of [...items].sort((a, b) => a.start - b.start)) {
+    if (it.end <= cursor) continue
+    if (it.start - cursor >= length - 1e-6) return cursor
+    cursor = Math.max(cursor, it.end)
+  }
+  return cursor + length <= 24 + 1e-6 ? cursor : null
 }
 
 function clock(hours: number) {
@@ -167,31 +196,75 @@ function DayPage() {
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    const [blockRes, taskRes, todoRes] = await Promise.all([
-      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done').eq('day', day).order('start_time'),
+  const fetchItems = useCallback(async () => {
+    const [blockRes, taskRes] = await Promise.all([
+      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done,habit_id').eq('day', day).order('start_time'),
       supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
-      supabase
-        .from('cass_time_blocks')
-        .select('id,title,day,start_time,end_time')
-        .eq('source', 'app')
-        .eq('done', false)
-        .order('day')
-        .order('start_time'),
     ])
-    const err = blockRes.error ?? taskRes.error ?? todoRes.error
+    const err = blockRes.error ?? taskRes.error
     if (err) setError(err.message)
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
-      return { id: b.id, title: b.title, start, end: b.end_time ? hoursOf(b.end_time) : start + 0.5, kind: 'block', done: b.done }
+      const end = b.end_time ? hoursOf(b.end_time) : start + 0.5
+      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id }
     })
     const tasks: CalItem[] = (taskRes.data ?? []).map((t) => {
       const start = hoursOf(t.start_time!)
       return { id: t.id, title: t.title, start, end: t.end_time ? hoursOf(t.end_time) : start + 0.5, kind: 'task', done: t.done }
     })
-    setItems([...blocks, ...tasks].sort((a, b) => a.start - b.start))
+    return [...blocks, ...tasks].sort((a, b) => a.start - b.start)
+  }, [day])
+
+  // Today, every habit without a block yet goes into the first gap that fits it,
+  // starting from now. The (habit_id, day) unique index keeps a racing load from
+  // placing one twice.
+  const placeHabits = useCallback(
+    async (current: CalItem[]) => {
+      const { data: habits, error } = await supabase.from('cass_habits').select('id,title,minutes').order('sort_order')
+      if (error) return setError(error.message), false
+      const placed = new Set(current.map((it) => it.habitId).filter(Boolean))
+      const occupied = [...current]
+      let added = false
+      for (const h of habits ?? []) {
+        if (placed.has(h.id)) continue
+        const length = h.minutes / 60
+        const start = freeSlot(occupied, nextQuarterHour(), length)
+        if (start === null) continue
+        const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
+          {
+            day,
+            title: h.title,
+            start_time: timeOf(start),
+            end_time: timeOf(start + length),
+            kind: 'personal',
+            source: 'habit',
+            habit_id: h.id,
+          },
+          { onConflict: 'habit_id,day', ignoreDuplicates: true },
+        )
+        if (insertError) return setError(insertError.message), added
+        occupied.push({ id: h.id, title: h.title, start, end: start + length, kind: 'block', done: false, habitId: h.id })
+        added = true
+      }
+      return added
+    },
+    [day],
+  )
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const todoRes = await supabase
+      .from('cass_time_blocks')
+      .select('id,title,day,start_time,end_time')
+      .eq('source', 'app')
+      .eq('done', false)
+      .order('day')
+      .order('start_time')
+    if (todoRes.error) setError(todoRes.error.message)
+    let current = await fetchItems()
+    if (day === today && (await placeHabits(current))) current = await fetchItems()
+    setItems(current)
     setTodos(
       (todoRes.data ?? []).map((t) => {
         const start = hoursOf(t.start_time)
@@ -199,7 +272,7 @@ function DayPage() {
       }),
     )
     setLoading(false)
-  }, [day])
+  }, [day, today, fetchItems, placeHabits])
 
   useEffect(() => {
     load()
@@ -243,9 +316,20 @@ function DayPage() {
       return load()
     }
     const length = item.end - item.start
-    const now = new Date()
-    const nextQuarter = Math.ceil((now.getHours() + now.getMinutes() / 60) * 4) / 4
-    const lastEnd = Math.max(item.start, ...items.filter((it) => it.id !== item.id).map((it) => it.end))
+    const nextQuarter = nextQuarterHour()
+    const others = items.filter((it) => it.id !== item.id)
+    // A habit moves forward into the next gap that fits it
+    if (item.habitId) {
+      const start = freeSlot(others, day === today ? Math.max(item.end, nextQuarter) : item.end, length)
+      if (start === null) return setError('No gap left today for that habit')
+      const { error } = await supabase
+        .from('cass_time_blocks')
+        .update({ done: false, start_time: timeOf(start), end_time: timeOf(start + length) })
+        .eq('id', item.id)
+      if (error) return setError(error.message)
+      return load()
+    }
+    const lastEnd = Math.max(item.start, ...others.map((it) => it.end))
     const start = day === today ? Math.max(lastEnd, nextQuarter) : lastEnd
     if (start + length > 24) return setError('No room left today to move that block')
     const { error } = await supabase
@@ -499,36 +583,67 @@ function DayGrid({
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
   const visible = items.filter((it) => it.end > first && it.start < last)
 
+  // Blocks under 30 minutes take half the column. Back to back short blocks
+  // alternate halves so their minimum height doesn't make them overlap.
+  const [gridWidth, setGridWidth] = useState(0)
+  const column = Math.max(0, gridWidth - EVENT_LEFT - EVENT_RIGHT)
+  const side = new Map<string, 'left' | 'right'>()
+  let prevShort: { bottom: number; side: 'left' | 'right' } | null = null
+  for (const it of visible) {
+    if (it.end - it.start >= 0.5) continue
+    const t = top(it.start) + 1
+    const s: 'left' | 'right' = prevShort && prevShort.bottom > t && prevShort.side === 'left' ? 'right' : 'left'
+    side.set(it.id, s)
+    prevShort = { bottom: t + SHORT_MIN_PX, side: s }
+  }
+
   return (
-    <View style={[styles.card, { height: (last - first) * HOUR_PX, padding: 0 }]}>
+    <View
+      style={[styles.card, { height: (last - first) * HOUR_PX, padding: 0 }]}
+      onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}
+    >
       {hours.map((h) => (
         <View key={h} style={[styles.hourLine, { top: top(h) }]}>
           <Text style={styles.hourLabel}>{clock(h)}</Text>
         </View>
       ))}
-      {visible.map((it) => (
-        <View
-          key={`${it.kind}-${it.id}`}
-          style={[
-            styles.event,
-            {
-              top: top(it.start) + 1,
-              height: Math.max(top(it.end) - top(it.start) - 2, 20),
-              backgroundColor: it.done ? c.blockDone : it.kind === 'block' ? c.block : c.task,
-            },
-          ]}
-        >
-          <Text style={styles.eventText} numberOfLines={1}>
-            {it.title}
-          </Text>
-          <Text style={[styles.eventTime, it.done && styles.eventTimeDone]}>
-            {clock(it.start)}–{clock(it.end)}
-          </Text>
-          <Pressable style={styles.more} hitSlop={10} onPress={(e) => onMore(it, e.nativeEvent.pageX, e.nativeEvent.pageY)}>
-            <MoreHorizontal size={18} color={c.ink} />
-          </Pressable>
-        </View>
-      ))}
+      {visible.map((it) => {
+        const half = side.get(it.id)
+        return (
+          <View
+            key={`${it.kind}-${it.id}`}
+            style={[
+              styles.event,
+              half
+                ? half === 'left'
+                  ? { left: EVENT_LEFT, right: EVENT_RIGHT + column / 2 + 2 }
+                  : { left: EVENT_LEFT + column / 2 + 2, right: EVENT_RIGHT }
+                : null,
+              {
+                top: top(it.start) + 1,
+                height: Math.max(top(it.end) - top(it.start) - 2, half ? SHORT_MIN_PX : 20),
+                backgroundColor: it.done ? c.blockDone : it.kind === 'block' ? c.block : c.task,
+              },
+            ]}
+          >
+            <Text style={styles.eventText} numberOfLines={1}>
+              {it.title}
+            </Text>
+            {half ? null : (
+              <Text style={[styles.eventTime, it.done && styles.eventTimeDone]}>
+                {clock(it.start)}–{clock(it.end)}
+              </Text>
+            )}
+            <Pressable
+              style={[styles.more, half && styles.moreShort]}
+              hitSlop={10}
+              onPress={(e) => onMore(it, e.nativeEvent.pageX, e.nativeEvent.pageY)}
+            >
+              <MoreHorizontal size={half ? 16 : 18} color={c.ink} />
+            </Pressable>
+          </View>
+        )
+      })}
       {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
@@ -568,12 +683,13 @@ const styles = StyleSheet.create({
   addInput: { flex: 1, fontSize: 16, color: c.ink, paddingVertical: 10 },
   hourLine: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, borderTopColor: c.line },
   hourLabel: { fontSize: 11, color: c.muted, marginLeft: 6, marginTop: 2 },
-  event: { position: 'absolute', left: 52, right: 6, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
+  event: { position: 'absolute', left: EVENT_LEFT, right: EVENT_RIGHT, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
   eventText: { fontSize: 14, fontWeight: '600', color: c.ink, marginRight: 24 },
   eventTime: { fontSize: 12, color: c.muted },
   // muted gray is 3.98:1 on blockDone; ink is 9.79:1
   eventTimeDone: { color: c.ink },
   more: { position: 'absolute', right: 6, top: 4 },
+  moreShort: { top: 1, right: 4 },
   menu: {
     position: 'absolute',
     right: 10,
