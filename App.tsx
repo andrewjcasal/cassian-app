@@ -21,6 +21,8 @@ type CalItem = { id: string; title: string; start: number; end: number; kind: 'b
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
+// Today's grid starts this many hours before now
+const LOOKBACK_HOURS = 2
 const LAST_HOUR = 24
 // New items fill one-hour blocks, starting here or after the day's last block
 const FILL_FROM_HOUR = 15
@@ -234,19 +236,21 @@ function DayPage() {
 }
 
 function DayGrid({ items, showNow }: { items: CalItem[]; showNow: boolean }) {
-  const hours = useMemo(() => Array.from({ length: LAST_HOUR - FIRST_HOUR }, (_, i) => FIRST_HOUR + i), [])
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
-  const top = (h: number) => (Math.max(h, FIRST_HOUR) - FIRST_HOUR) * HOUR_PX
+  const first = showNow ? Math.max(0, Math.floor(nowHours) - LOOKBACK_HOURS) : FIRST_HOUR
+  const hours = useMemo(() => Array.from({ length: LAST_HOUR - first }, (_, i) => first + i), [first])
+  const top = (h: number) => (Math.max(h, first) - first) * HOUR_PX
+  const visible = items.filter((it) => it.end > first)
 
   return (
-    <View style={[styles.card, { height: (LAST_HOUR - FIRST_HOUR) * HOUR_PX, padding: 0 }]}>
+    <View style={[styles.card, { height: (LAST_HOUR - first) * HOUR_PX, padding: 0 }]}>
       {hours.map((h) => (
         <View key={h} style={[styles.hourLine, { top: top(h) }]}>
           <Text style={styles.hourLabel}>{clock(h)}</Text>
         </View>
       ))}
-      {items.map((it) => (
+      {visible.map((it) => (
         <View
           key={`${it.kind}-${it.id}`}
           style={[
@@ -266,7 +270,7 @@ function DayGrid({ items, showNow }: { items: CalItem[]; showNow: boolean }) {
           </Text>
         </View>
       ))}
-      {showNow && nowHours >= FIRST_HOUR ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
+      {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
 }
