@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
-  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -162,7 +161,8 @@ function DayPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
-  const [panelOpen, setPanelOpen] = useState(false)
+  const [navMenu, setNavMenu] = useState<{ x: number; y: number } | null>(null)
+  const [view, setView] = useState<'day' | 'habits'>('day')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
@@ -277,6 +277,8 @@ function DayPage() {
     load()
   }
 
+  if (view === 'habits') return <HabitsScreen onBack={() => setView('day')} />
+
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -296,7 +298,11 @@ function DayPage() {
             <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
               <ChevronRight size={22} color={c.ink} />
             </Pressable>
-            <Pressable onPress={() => setPanelOpen(true)} hitSlop={10} accessibilityLabel="Menu">
+            <Pressable
+              onPress={(e) => setNavMenu({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })}
+              hitSlop={10}
+              accessibilityLabel="Menu"
+            >
               <MenuIcon size={20} color={c.ink} />
             </Pressable>
           </View>
@@ -370,52 +376,74 @@ function DayPage() {
         </Pressable>
       </Modal>
 
-      <SidePanel open={panelOpen} onClose={() => setPanelOpen(false)} />
+      <Modal visible={navMenu !== null} transparent animationType="none" onRequestClose={() => setNavMenu(null)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setNavMenu(null)}>
+          {navMenu ? (
+            <View style={[styles.menu, { top: navMenu.y + 12, right: Math.max(8, width - navMenu.x - 12) }]}>
+              <Pressable
+                style={[styles.menuItem, styles.menuRow]}
+                onPress={() => {
+                  setNavMenu(null)
+                  setView('habits')
+                }}
+              >
+                <Repeat size={16} color={c.ink} />
+                <Text style={styles.menuText}>Habits</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.menuItem, styles.menuRow]}
+                onPress={() => {
+                  setNavMenu(null)
+                  supabase.auth.signOut()
+                }}
+              >
+                <LogOut size={16} color={c.ink} />
+                <Text style={styles.menuText}>Sign out</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </Pressable>
+      </Modal>
     </View>
   )
 }
 
-const PANEL_WIDTH = 260
+type Habit = { id: string; title: string; minutes: number }
 
-function SidePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const slide = useRef(new Animated.Value(PANEL_WIDTH)).current
-  const [mounted, setMounted] = useState(open)
+function HabitsScreen({ onBack }: { onBack: () => void }) {
+  const [habits, setHabits] = useState<Habit[]>([])
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (open) setMounted(true)
-    Animated.timing(slide, { toValue: open ? 0 : PANEL_WIDTH, duration: 200, useNativeDriver: true }).start(() => {
-      if (!open) setMounted(false)
-    })
-  }, [open, slide])
-
-  const items = [
-    // Habits has no screen yet; it's listed so the panel has its shape
-    { key: 'habits', label: 'Habits', Icon: Repeat, onPress: onClose },
-    {
-      key: 'signout',
-      label: 'Sign out',
-      Icon: LogOut,
-      onPress: () => {
-        onClose()
-        supabase.auth.signOut()
-      },
-    },
-  ]
+    supabase
+      .from('cass_habits')
+      .select('id,title,minutes')
+      .order('sort_order')
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        setHabits(data ?? [])
+      })
+  }, [])
 
   return (
-    <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={styles.panelBackdrop} onPress={onClose} />
-      <Animated.View style={[styles.panel, { transform: [{ translateX: slide }] }]}>
-        <SafeAreaView edges={['top', 'bottom']}>
-          {items.map(({ key, label, Icon, onPress }) => (
-            <Pressable key={key} style={styles.panelItem} onPress={onPress}>
-              <Icon size={18} color={c.ink} />
-              <Text style={styles.panelText}>{label}</Text>
-            </Pressable>
-          ))}
-        </SafeAreaView>
-      </Animated.View>
-    </Modal>
+    <ScrollView contentContainerStyle={styles.page}>
+      <View style={styles.header}>
+        <Pressable onPress={onBack} hitSlop={10} accessibilityLabel="Back">
+          <ChevronLeft size={22} color={c.ink} />
+        </Pressable>
+        <Text style={styles.title}>Habits</Text>
+        <View style={{ width: 22 }} />
+      </View>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <View style={styles.card}>
+        {habits.map((h) => (
+          <View key={h.id} style={styles.todoRow}>
+            <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
+            <Text style={styles.minutesLabel}>{h.minutes} min</Text>
+          </View>
+        ))}
+      </View>
+    </ScrollView>
   )
 }
 
@@ -561,22 +589,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
-  panelBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.25)' },
-  panel: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    right: 0,
-    width: PANEL_WIDTH,
-    backgroundColor: c.card,
-    paddingHorizontal: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  panelItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 10 },
-  panelText: { fontSize: 16, color: c.ink },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
