@@ -24,8 +24,9 @@ type Status = 'done' | 'not_started' | 'follow_up'
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
-// Today's grid starts this many hours before now
-const LOOKBACK_HOURS = 2
+// Today's grid shows this many hours before and after now
+const LOOKBACK_HOURS = 3
+const LOOKAHEAD_HOURS = 5
 const LAST_HOUR = 24
 // New items fill one-hour blocks, starting here or after the day's last block
 const FILL_FROM_HOUR = 15
@@ -416,13 +417,14 @@ function DayGrid({
 }) {
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
-  const first = showNow ? Math.max(0, Math.floor(nowHours) - LOOKBACK_HOURS) : FIRST_HOUR
-  const hours = useMemo(() => Array.from({ length: LAST_HOUR - first }, (_, i) => first + i), [first])
-  const top = (h: number) => (Math.max(h, first) - first) * HOUR_PX
-  const visible = items.filter((it) => it.end > first)
+  const first = showNow ? Math.max(0, Math.floor(nowHours - LOOKBACK_HOURS)) : FIRST_HOUR
+  const last = showNow ? Math.min(24, Math.ceil(nowHours + LOOKAHEAD_HOURS)) : LAST_HOUR
+  const hours = useMemo(() => Array.from({ length: last - first }, (_, i) => first + i), [first, last])
+  const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
+  const visible = items.filter((it) => it.end > first && it.start < last)
 
   return (
-    <View style={[styles.card, { height: (LAST_HOUR - first) * HOUR_PX, padding: 0 }]}>
+    <View style={[styles.card, { height: (last - first) * HOUR_PX, padding: 0 }]}>
       {hours.map((h) => (
         <View key={h} style={[styles.hourLine, { top: top(h) }]}>
           <Text style={styles.hourLabel}>{clock(h)}</Text>
