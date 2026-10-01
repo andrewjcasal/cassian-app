@@ -14,15 +14,16 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
-import { ChevronLeft, ChevronRight, Circle, CircleCheck, LogOut, Plus } from 'lucide-react-native'
+import { ChevronLeft, ChevronRight, LogOut, Plus } from 'lucide-react-native'
 import { supabase } from './src/supabase'
 
-type Todo = { id: string; title: string; done: boolean; day: string }
 type CalItem = { id: string; title: string; start: number; end: number; kind: 'block' | 'task'; done: boolean }
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
 const LAST_HOUR = 24
+// New items fill one-hour blocks, starting here or after the day's last block
+const FILL_FROM_HOUR = 15
 
 const c = {
   bg: '#fafaf7',
@@ -57,6 +58,13 @@ function dayLabel(day: string) {
 function hoursOf(time: string) {
   const [h, m] = time.split(':').map(Number)
   return h + m / 60
+}
+
+// 15.5 -> "15:30:00"
+function timeOf(hours: number) {
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
 }
 
 function clock(hours: number) {
@@ -136,7 +144,6 @@ function SignIn() {
 function DayPage() {
   const today = toDayString(new Date())
   const [day, setDay] = useState(today)
-  const [todos, setTodos] = useState<Todo[]>([])
   const [items, setItems] = useState<CalItem[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
@@ -145,14 +152,12 @@ function DayPage() {
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const [todoRes, blockRes, taskRes] = await Promise.all([
-      supabase.from('cass_tasks').select('id,title,done,day').eq('section', 'todo').eq('done', false).order('day').order('sort_order'),
+    const [blockRes, taskRes] = await Promise.all([
       supabase.from('cass_time_blocks').select('id,title,start_time,end_time').eq('day', day).order('start_time'),
       supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
     ])
-    const err = todoRes.error ?? blockRes.error ?? taskRes.error
+    const err = blockRes.error ?? taskRes.error
     if (err) setError(err.message)
-    setTodos(todoRes.data ?? [])
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
       return { id: b.id, title: b.title, start, end: b.end_time ? hoursOf(b.end_time) : start + 0.5, kind: 'block', done: false }
@@ -169,27 +174,17 @@ function DayPage() {
     load()
   }, [load])
 
-  const toggle = async (todo: Todo) => {
-    const done = !todo.done
-    setTodos((list) => list.map((t) => (t.id === todo.id ? { ...t, done } : t)))
-    const { error } = await supabase.from('cass_tasks').update({ done }).eq('id', todo.id)
-    if (error) setError(error.message)
-  }
-
   const add = async () => {
     const title = draft.trim()
     if (!title) return
     setDraft('')
-    // cass_tasks.day references cass_days, so the day row has to exist first
-    const dayRes = await supabase.from('cass_days').upsert({ day: today }, { onConflict: 'day', ignoreDuplicates: true })
-    if (dayRes.error) return setError(dayRes.error.message)
-    const { data, error } = await supabase
-      .from('cass_tasks')
-      .insert({ day: today, title, section: 'todo', source: 'app', sort_order: todos.length + 1 })
-      .select('id,title,done,day')
-      .single()
+    const start = Math.max(FILL_FROM_HOUR, ...items.map((it) => it.end))
+    if (start + 1 > 24) return setError('No room left today after the last block')
+    const { error } = await supabase
+      .from('cass_time_blocks')
+      .insert({ day, title, start_time: timeOf(start), end_time: timeOf(start + 1), kind: 'personal', source: 'app' })
     if (error) return setError(error.message)
-    setTodos((list) => [...list, data])
+    load()
   }
 
   return (
@@ -213,31 +208,21 @@ function DayPage() {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <Text style={styles.section}>TODOS</Text>
-      <View style={styles.card}>
-        {todos.map((t) => (
-          <Pressable key={t.id} style={styles.todoRow} onPress={() => toggle(t)}>
-            {t.done ? <CircleCheck size={20} color={c.accent} /> : <Circle size={20} color={c.muted} />}
-            <Text style={[styles.todoText, t.done && styles.todoDone]}>{t.title}</Text>
-          </Pressable>
-        ))}
-        <View style={styles.addRow}>
-          <TextInput
-            style={styles.addInput}
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Add a todo"
-            placeholderTextColor={c.muted}
-            returnKeyType="done"
-            onSubmitEditing={add}
-          />
-          <Pressable onPress={add} hitSlop={8}>
-            <Plus size={20} color={c.accent} />
-          </Pressable>
-        </View>
+      <View style={[styles.card, styles.addRow]}>
+        <TextInput
+          style={styles.addInput}
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Add an hour block"
+          placeholderTextColor={c.muted}
+          returnKeyType="done"
+          onSubmitEditing={add}
+        />
+        <Pressable onPress={add} hitSlop={8}>
+          <Plus size={20} color={c.accent} />
+        </Pressable>
       </View>
 
-      <Text style={styles.section}>CALENDAR</Text>
       <DayGrid items={items} showNow={day === today} />
 
       <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
@@ -273,7 +258,7 @@ function DayGrid({ items, showNow }: { items: CalItem[]; showNow: boolean }) {
             },
           ]}
         >
-          <Text style={[styles.eventText, it.done && styles.todoDone]} numberOfLines={1}>
+          <Text style={[styles.eventText, it.done && styles.done]} numberOfLines={1}>
             {it.title}
           </Text>
           <Text style={styles.eventTime}>
@@ -293,12 +278,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
   subtitle: { fontSize: 14, color: c.muted, textAlign: 'center' },
-  section: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8, color: c.ink, marginTop: 12, marginBottom: 6 },
   card: { backgroundColor: c.card, borderRadius: 10, borderWidth: 1, borderColor: c.line, padding: 4 },
-  todoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 8 },
-  todoText: { fontSize: 16, color: c.ink, flex: 1 },
-  todoDone: { color: c.muted, textDecorationLine: 'line-through' },
-  addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, borderTopWidth: 1, borderTopColor: c.line },
+  done: { color: c.muted, textDecorationLine: 'line-through' },
+  addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, marginBottom: 10 },
   addInput: { flex: 1, fontSize: 16, color: c.ink, paddingVertical: 10 },
   hourLine: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, borderTopColor: c.line },
   hourLabel: { fontSize: 11, color: c.muted, marginLeft: 6, marginTop: 2 },
