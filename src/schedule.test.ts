@@ -238,7 +238,8 @@ test('menuOptions follows the block timing', () => {
   assert.equal(keys(block('later', 19, 20), DAY, now), 'done,follow_up')
   assert.equal(keys(block('earlier day', 19, 20), '2026-09-30', now), 'done,not_started,follow_up')
   assert.equal(keys(block('later day', 9, 10), '2026-10-02', now), 'done,follow_up')
-  assert.equal(keys(block('done', 15, 16, { done: true }), DAY, now), 'done,not_started,follow_up')
+  assert.equal(keys(block('done', 15, 16, { done: true }), DAY, now), 'not_started,follow_up')
+  assert.equal(keys(block('done later', 19, 20, { done: true }), DAY, now), 'follow_up')
 })
 
 test('durationOptions shows the next shorter and longer steps', () => {
