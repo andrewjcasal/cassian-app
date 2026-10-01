@@ -147,22 +147,38 @@ function SignIn() {
   )
 }
 
+type Tab = 'todos' | 'agenda'
+// A todo is a block added from this app that isn't done yet, on any day
+type Todo = { id: string; title: string; day: string; start: number; end: number }
+type Menu = { item: CalItem; x: number; y: number }
+
 function DayPage() {
   const today = toDayString(new Date())
   const [day, setDay] = useState(today)
+  const [tab, setTab] = useState<Tab>('agenda')
   const [items, setItems] = useState<CalItem[]>([])
+  const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
+  const [menu, setMenu] = useState<Menu | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { width } = useWindowDimensions()
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const [blockRes, taskRes] = await Promise.all([
+    const [blockRes, taskRes, todoRes] = await Promise.all([
       supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done').eq('day', day).order('start_time'),
       supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
+      supabase
+        .from('cass_time_blocks')
+        .select('id,title,day,start_time,end_time')
+        .eq('source', 'app')
+        .eq('done', false)
+        .order('day')
+        .order('start_time'),
     ])
-    const err = blockRes.error ?? taskRes.error
+    const err = blockRes.error ?? taskRes.error ?? todoRes.error
     if (err) setError(err.message)
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
@@ -173,6 +189,12 @@ function DayPage() {
       return { id: t.id, title: t.title, start, end: t.end_time ? hoursOf(t.end_time) : start + 0.5, kind: 'task', done: t.done }
     })
     setItems([...blocks, ...tasks].sort((a, b) => a.start - b.start))
+    setTodos(
+      (todoRes.data ?? []).map((t) => {
+        const start = hoursOf(t.start_time)
+        return { id: t.id, title: t.title, day: t.day, start, end: t.end_time ? hoursOf(t.end_time) : start + 1 }
+      }),
+    )
     setLoading(false)
   }, [day])
 
@@ -193,7 +215,7 @@ function DayPage() {
     load()
   }
 
-  // Done crosses the block out. Not started moves it, same length, to start when the
+  // Done turns the block green. Not started moves it, same length, to start when the
   // day's last other block ends (or at the next quarter hour, if that's already past).
   const setStatus = async (item: CalItem, status: Status) => {
     const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
@@ -216,64 +238,165 @@ function DayPage() {
     load()
   }
 
+  // A new length moves this todo's end, and the same day's later todos shift by the
+  // same amount so the chain stays back to back.
+  const setMinutes = async (todo: Todo, minutes: number) => {
+    const delta = todo.start + minutes / 60 - todo.end
+    if (!delta) return
+    const later = todos.filter((t) => t.day === todo.day && t.id !== todo.id && t.start >= todo.end - 1e-6)
+    if (Math.max(todo.end, ...later.map((t) => t.end)) + delta > 24) return setError('That runs past midnight')
+    const updates = [
+      { id: todo.id, start: todo.start, end: todo.end + delta },
+      ...later.map((t) => ({ id: t.id, start: t.start + delta, end: t.end + delta })),
+    ]
+    const results = await Promise.all(
+      updates.map((u) =>
+        supabase.from('cass_time_blocks').update({ start_time: timeOf(u.start), end_time: timeOf(u.end) }).eq('id', u.id),
+      ),
+    )
+    const failed = results.find((r) => r.error)
+    if (failed?.error) setError(failed.error.message)
+    load()
+  }
+
   return (
-    <ScrollView
-      contentContainerStyle={styles.page}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-    >
-      <View style={styles.header}>
-        <Pressable onPress={() => setDay(shiftDay(day, -1))} hitSlop={10}>
-          <ChevronLeft size={22} color={c.ink} />
+    <View style={styles.screen}>
+      <ScrollView
+        contentContainerStyle={styles.page}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+      >
+        <View style={styles.header}>
+          <Pressable onPress={() => setDay(shiftDay(day, -1))} hitSlop={10}>
+            <ChevronLeft size={22} color={c.ink} />
+          </Pressable>
+          <Pressable onPress={() => setDay(today)}>
+            <Text style={styles.title}>{day === today ? 'Today' : dayLabel(day)}</Text>
+            {day === today ? <Text style={styles.subtitle}>{dayLabel(day)}</Text> : null}
+          </Pressable>
+          <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
+            <ChevronRight size={22} color={c.ink} />
+          </Pressable>
+        </View>
+
+        <View style={styles.tabs}>
+          {(
+            [
+              ['todos', 'Todos'],
+              ['agenda', 'Agenda'],
+            ] as const
+          ).map(([key, label]) => (
+            <Pressable key={key} style={[styles.tab, tab === key && styles.tabActive]} onPress={() => setTab(key)}>
+              <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        {tab === 'todos' ? (
+          <View style={styles.card}>
+            {todos.map((t) => (
+              <TodoRow key={t.id} todo={t} today={today} onMinutes={(m) => setMinutes(t, m)} />
+            ))}
+            <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
+              <TextInput
+                style={styles.addInput}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Add a todo"
+                placeholderTextColor={c.muted}
+                returnKeyType="done"
+                onSubmitEditing={add}
+              />
+              <Pressable onPress={add} hitSlop={8}>
+                <Plus size={20} color={c.accent} />
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <DayGrid items={items} showNow={day === today} onMore={(item, x, y) => setMenu({ item, x, y })} />
+        )}
+
+        <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
+          <LogOut size={14} color={c.muted} />
+          <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
-        <Pressable onPress={() => setDay(today)}>
-          <Text style={styles.title}>{day === today ? 'Today' : dayLabel(day)}</Text>
-          {day === today ? <Text style={styles.subtitle}>{dayLabel(day)}</Text> : null}
+      </ScrollView>
+
+      <Modal visible={menu !== null} transparent animationType="none" onRequestClose={() => setMenu(null)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
+          {menu ? (
+            <View style={[styles.menu, { top: menu.y + 12, right: Math.max(8, width - menu.x - 12) }]}>
+              {(
+                [
+                  ['done', 'Done'],
+                  ['not_started', 'Not started'],
+                ] as const
+              ).map(([status, label]) => (
+                <Pressable
+                  key={status}
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setMenu(null)
+                    setStatus(menu.item, status)
+                  }}
+                >
+                  <Text style={styles.menuText}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
         </Pressable>
-        <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
-          <ChevronRight size={22} color={c.ink} />
-        </Pressable>
+      </Modal>
+    </View>
+  )
+}
+
+function TodoRow({ todo, today, onMinutes }: { todo: Todo; today: string; onMinutes: (minutes: number) => void }) {
+  const minutes = Math.round((todo.end - todo.start) * 60)
+  const [value, setValue] = useState(String(minutes))
+  useEffect(() => setValue(String(minutes)), [minutes])
+
+  const commit = () => {
+    const next = parseInt(value, 10)
+    if (!next || next <= 0) return setValue(String(minutes))
+    if (next !== minutes) onMinutes(next)
+  }
+
+  return (
+    <View style={styles.todoRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.todoText}>{todo.title}</Text>
+        <Text style={styles.todoMeta}>
+          {todo.day === today ? '' : `${dayLabel(todo.day)} · `}
+          {clock(todo.start)}
+        </Text>
       </View>
-
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-
-      <View style={[styles.card, styles.addRow]}>
-        <TextInput
-          style={styles.addInput}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Add an hour block"
-          placeholderTextColor={c.muted}
-          returnKeyType="done"
-          onSubmitEditing={add}
-        />
-        <Pressable onPress={add} hitSlop={8}>
-          <Plus size={20} color={c.accent} />
-        </Pressable>
-      </View>
-
-      <DayGrid items={items} showNow={day === today} onStatus={setStatus} />
-
-      <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
-        <LogOut size={14} color={c.muted} />
-        <Text style={styles.signOutText}>Sign out</Text>
-      </Pressable>
-    </ScrollView>
+      <TextInput
+        style={styles.minutesInput}
+        value={value}
+        onChangeText={setValue}
+        onBlur={commit}
+        onSubmitEditing={commit}
+        keyboardType="number-pad"
+        returnKeyType="done"
+        selectTextOnFocus
+      />
+      <Text style={styles.minutesLabel}>min</Text>
+    </View>
   )
 }
 
 function DayGrid({
   items,
   showNow,
-  onStatus,
+  onMore,
 }: {
   items: CalItem[]
   showNow: boolean
-  onStatus: (item: CalItem, status: Status) => void
+  onMore: (item: CalItem, x: number, y: number) => void
 }) {
-  // Where the "..." was tapped, so the menu opens beside it in a full-screen modal
-  const { width } = useWindowDimensions()
-  const [menu, setMenu] = useState<{ item: CalItem; x: number; y: number } | null>(null)
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
   const first = showNow ? Math.max(0, Math.floor(nowHours) - LOOKBACK_HOURS) : FIRST_HOUR
@@ -306,40 +429,11 @@ function DayGrid({
           <Text style={[styles.eventTime, it.done && styles.eventTimeDone]}>
             {clock(it.start)}–{clock(it.end)}
           </Text>
-          <Pressable
-            style={styles.more}
-            hitSlop={10}
-            onPress={(e) => setMenu({ item: it, x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })}
-          >
+          <Pressable style={styles.more} hitSlop={10} onPress={(e) => onMore(it, e.nativeEvent.pageX, e.nativeEvent.pageY)}>
             <MoreHorizontal size={18} color={c.ink} />
           </Pressable>
         </View>
       ))}
-      <Modal visible={menu !== null} transparent animationType="none" onRequestClose={() => setMenu(null)}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
-          {menu ? (
-            <View style={[styles.menu, { top: menu.y + 12, right: Math.max(8, width - menu.x - 12) }]}>
-              {(
-                [
-                  ['done', 'Done'],
-                  ['not_started', 'Not started'],
-                ] as const
-              ).map(([status, label]) => (
-                <Pressable
-                  key={status}
-                  style={styles.menuItem}
-                  onPress={() => {
-                    setMenu(null)
-                    onStatus(menu.item, status)
-                  }}
-                >
-                  <Text style={styles.menuText}>{label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-        </Pressable>
-      </Modal>
       {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
@@ -353,7 +447,28 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
   subtitle: { fontSize: 14, color: c.muted, textAlign: 'center' },
   card: { backgroundColor: c.card, borderRadius: 10, borderWidth: 1, borderColor: c.line, padding: 4 },
-  addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, marginBottom: 10 },
+  addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8 },
+  addRowDivider: { borderTopWidth: 1, borderTopColor: c.line },
+  tabs: { flexDirection: 'row', gap: 4, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: c.line },
+  tab: { paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 2, borderBottomColor: 'transparent', marginBottom: -1 },
+  tabActive: { borderBottomColor: c.accent },
+  tabText: { fontSize: 16, color: c.muted },
+  tabTextActive: { color: c.ink, fontWeight: '600' },
+  todoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 8 },
+  todoText: { fontSize: 16, color: c.ink },
+  todoMeta: { fontSize: 13, color: c.muted },
+  minutesInput: {
+    width: 56,
+    fontSize: 16,
+    color: c.ink,
+    textAlign: 'right',
+    borderWidth: 1,
+    borderColor: c.line,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  minutesLabel: { fontSize: 14, color: c.muted },
   addInput: { flex: 1, fontSize: 16, color: c.ink, paddingVertical: 10 },
   hourLine: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, borderTopColor: c.line },
   hourLabel: { fontSize: 11, color: c.muted, marginLeft: 6, marginTop: 2 },
