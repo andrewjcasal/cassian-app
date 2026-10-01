@@ -29,7 +29,7 @@ import {
   clock,
   donePlan,
   durationOptions,
-  fillStart,
+  newBlockStart,
   halfSides,
   hoursOf,
   isDoneEarly,
@@ -255,8 +255,9 @@ function DayPage() {
     load()
   }
 
+  // New todos and follow-ups fill the first gap that fits
   const insertBlock = async (title: string, length: number, label: string) => {
-    const start = fillStart(items, length)
+    const start = newBlockStart(items, length, day === today, nowHours())
     if (start === null) return setError(`No room left today for ${label}`)
     const { error } = await supabase
       .from('cass_time_blocks')

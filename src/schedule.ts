@@ -23,7 +23,7 @@ export type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
 // A block's new times
 export type Move = { id: string; kind: 'block' | 'task'; start: number; end: number }
 
-// New todos and follow-ups fill from here, or after the day's last block
+// New todos and follow-ups look for a gap from here
 export const FILL_FROM_HOUR = 15
 
 // Lengths a todo can step through, in minutes
@@ -120,11 +120,12 @@ export function freeSlot(items: CalItem[], from: number, length: number) {
   return cursor + length <= 24 + EPS ? cursor : null
 }
 
-// Where a new todo or follow-up of `length` hours starts: 3pm, or when the day's
-// last block ends if that's later. Null if it would run past midnight.
-export function fillStart(items: CalItem[], length: number) {
-  const start = Math.max(FILL_FROM_HOUR, ...items.map((it) => it.end))
-  return start + length > 24 + EPS ? null : start
+// Where a new todo or follow-up of `length` hours starts: the first gap that fits
+// it, looking from 3pm, or from the next quarter hour today if that's later. Null
+// if nothing fits before midnight.
+export function newBlockStart(items: CalItem[], length: number, isToday: boolean, now: number) {
+  const from = isToday ? Math.max(FILL_FROM_HOUR, nextQuarter(now)) : FILL_FROM_HOUR
+  return freeSlot(items, from, length)
 }
 
 // Today, every habit without a block yet goes into the first gap that fits it,
