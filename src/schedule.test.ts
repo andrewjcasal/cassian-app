@@ -1,0 +1,208 @@
+/// <reference types="node" />
+// Run with `npm test` (Node's built-in test runner; Node strips the types).
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  type CalItem,
+  type Todo,
+  clock,
+  dateAt,
+  donePlan,
+  durationOptions,
+  fillStart,
+  freeSlot,
+  halfSides,
+  isDoneEarly,
+  menuOptions,
+  notStartedPlan,
+  placeHabits,
+  relayout,
+  resizePlan,
+  startNowPlan,
+  timeOf,
+} from './schedule.ts'
+
+const at = (h: number, m = 0) => h + m / 60
+const DAY = '2026-10-01'
+
+function block(id: string, start: number, end: number, extra: Partial<CalItem> = {}): CalItem {
+  return { id, title: id, start, end, kind: 'block', done: false, source: 'app', ...extra }
+}
+
+function todo(id: string, start: number, end: number, day = DAY): Todo {
+  return { id, title: id, day, start, end, habit: false }
+}
+
+// Shorthand for comparing moves: "id@HH:MM-HH:MM"
+const fmt = (moves: { id: string; start: number; end: number }[]) =>
+  moves.map((m) => `${m.id}@${timeOf(m.start).slice(0, 5)}-${timeOf(m.end).slice(0, 5)}`)
+
+test('time formatting rounds on total minutes', () => {
+  assert.equal(timeOf(18.99999), '19:00:00')
+  assert.equal(timeOf(at(19, 27)), '19:27:00')
+  assert.equal(clock(15), '3pm')
+  assert.equal(clock(at(19, 15)), '7:15pm')
+  assert.equal(clock(0), '12am')
+})
+
+test('freeSlot finds the first gap that fits', () => {
+  const day = [block('a', 15, 16), block('b', 18, 19), block('c', 19, 20)]
+  assert.equal(freeSlot(day, 17, 0.25), 17)
+  assert.equal(freeSlot(day, at(18, 30), 0.25), 20)
+  assert.equal(freeSlot([...day, block('h', 17, at(17, 15))], 17, 0.25), at(17, 15))
+  assert.equal(freeSlot([block('a', 10, 11), block('b', at(11, 6), 12)], at(10, 54), 0.25), 12)
+  assert.equal(freeSlot([block('a', 20, 24)], at(23, 54), 0.25), null)
+})
+
+test('fillStart puts new todos at 3pm or after the last block', () => {
+  assert.equal(fillStart([], 1), 15)
+  assert.equal(fillStart([block('a', 18, 19)], 1), 19)
+  assert.equal(fillStart([block('a', 18, at(23, 30))], 1), null)
+})
+
+test('placeHabits fills gaps from now and skips habits already placed', () => {
+  const items = [block('carve', 18, 19), block('washer', 19, 20), block('followup', 20, at(20, 30))]
+  const habits = [
+    { id: 'skool', title: 'Skool replies', minutes: 15 },
+    { id: 'linkedin', title: 'LinkedIn replies', minutes: 15 },
+  ]
+  assert.deepEqual(fmt(placeHabits(items, habits, at(18, 6)).map((p) => ({ ...p, id: p.habitId }))), [
+    'skool@20:30-20:45',
+    'linkedin@20:45-21:00',
+  ])
+  const withSkool = [...items, block('s', at(20, 30), at(20, 45), { habitId: 'skool', source: 'habit' })]
+  assert.deepEqual(
+    placeHabits(withSkool, habits, at(18, 6)).map((p) => p.habitId),
+    ['linkedin'],
+  )
+})
+
+test('Start now moves the block to this minute and carries later todos and habits down', () => {
+  const carve = block('carve', 18, 19)
+  const items = [
+    block('oven', 15, 16, { done: true }),
+    carve,
+    block('washer', 19, 20),
+    block('skool', at(20, 30), at(20, 45), { source: 'habit', habitId: 'h1' }),
+    block('oldmanual', 21, 22, { source: 'manual' }),
+  ]
+  const plan = startNowPlan(items, carve, at(18, 12))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['carve@18:12-19:12', 'washer@19:12-20:12', 'skool@20:42-20:57'])
+})
+
+test('Start now before the block starts changes nothing', () => {
+  const plan = startNowPlan([block('a', 19, 20)], block('a', 19, 20), at(18, 30))
+  assert.deepEqual(plan, { moves: [] })
+})
+
+test('Start now refuses to run past midnight', () => {
+  const late = block('late', 22, at(23, 50))
+  assert.ok('error' in startNowPlan([late], late, at(22, 30)))
+})
+
+test('Done on a block under way ends it now and moves later blocks up', () => {
+  const followup = block('followup', at(19, 15), at(19, 45))
+  const items = [followup, block('washer', at(19, 45), at(20, 45)), block('skool', at(20, 45), 21, { source: 'habit' })]
+  const plan = donePlan(items, followup, true, at(19, 27))
+  assert.equal(plan.endAt, at(19, 27))
+  assert.deepEqual(fmt(plan.moves), ['washer@19:27-20:27', 'skool@20:27-20:42'])
+})
+
+test('Done on a block that has not started, or is over, leaves the schedule alone', () => {
+  const later = block('washer', at(19, 45), at(20, 45))
+  assert.deepEqual(donePlan([later], later, true, at(19, 27)), { endAt: null, moves: [] })
+  const over = block('oven', 15, 16)
+  assert.deepEqual(donePlan([over], over, true, at(19, 27)), { endAt: null, moves: [] })
+  const underWayOtherDay = block('x', 19, 20)
+  assert.deepEqual(donePlan([underWayOtherDay], underWayOtherDay, false, at(19, 27)), { endAt: null, moves: [] })
+})
+
+test('isDoneEarly is true only when done before the block starts', () => {
+  const tapped = new Date(2026, 9, 1, 19, 27).toISOString()
+  assert.equal(isDoneEarly(true, tapped, DAY, at(19, 45)), true)
+  assert.equal(isDoneEarly(true, tapped, DAY, 15), false)
+  assert.equal(isDoneEarly(true, null, DAY, at(19, 45)), false)
+  assert.equal(isDoneEarly(false, tapped, DAY, at(19, 45)), false)
+  assert.equal(dateAt(DAY, at(19, 45)).getHours(), 19)
+})
+
+test('Not started moves a todo after the last block, never before the next quarter hour', () => {
+  const carve = block('carve', 16, 17)
+  const items = [block('oven', 15, 16), carve, block('washer', 17, 18)]
+  assert.deepEqual(notStartedPlan(items, carve, true, at(14, 46)), { start: 18, end: 19 })
+  assert.deepEqual(notStartedPlan(items, carve, true, at(18, 10)), { start: at(18, 15), end: at(19, 15) })
+})
+
+test('Not started moves a habit into the next gap after it', () => {
+  const skool = block('skool', at(20, 30), at(20, 45), { source: 'habit', habitId: 'h1' })
+  const items = [skool, block('a', at(20, 45), 21), block('b', at(21, 30), 22)]
+  assert.deepEqual(notStartedPlan(items, skool, true, at(20, 0)), { start: 21, end: at(21, 15) })
+})
+
+test('resizePlan changes the length and shifts the same day later todos', () => {
+  const carve = todo('carve', 16, 17)
+  const todos = [carve, todo('washer', 17, 18), todo('tomorrow', 17, 18, '2026-10-02')]
+  const plan = resizePlan(todos, carve, 90)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['carve@16:00-17:30', 'washer@17:30-18:30'])
+  assert.deepEqual(resizePlan(todos, carve, 60), { moves: [] })
+})
+
+test('relayout re-packs the swapped range back to back', () => {
+  const washer = todo('washer', at(19, 15), at(20, 15))
+  const followup = todo('followup', at(20, 15), at(20, 45))
+  const x = todo('x', 21, 22)
+  assert.deepEqual(fmt(relayout([washer, followup, x], [followup, washer, x])), [
+    'followup@19:15-19:45',
+    'washer@19:45-20:45',
+  ])
+  assert.deepEqual(relayout([washer, followup], [washer, followup]), [])
+  assert.deepEqual(fmt(relayout([washer, followup, x], [x, washer, followup])), [
+    'x@19:15-20:15',
+    'washer@20:15-21:15',
+    'followup@21:15-21:45',
+  ])
+})
+
+test('menuOptions follows the block timing', () => {
+  const keys = (item: CalItem, day: string, now: number) => menuOptions(item, day, DAY, now).map(([k]) => k).join(',')
+  const now = at(18, 12)
+  assert.equal(keys(block('ended', 15, 16), DAY, now), 'start_now,done,not_started,follow_up')
+  assert.equal(keys(block('underway', 18, 19), DAY, now), 'start_now,done')
+  assert.equal(keys(block('later', 19, 20), DAY, now), 'done,follow_up')
+  assert.equal(keys(block('earlier day', 19, 20), '2026-09-30', now), 'done,not_started,follow_up')
+  assert.equal(keys(block('later day', 9, 10), '2026-10-02', now), 'done,follow_up')
+  assert.equal(keys(block('done', 15, 16, { done: true }), DAY, now), 'done,not_started,follow_up')
+})
+
+test('durationOptions shows the next shorter and longer steps', () => {
+  assert.deepEqual(durationOptions(30), [15, 30, 45])
+  assert.deepEqual(durationOptions(45), [30, 45, 60])
+  assert.deepEqual(durationOptions(15), [5, 15, 30])
+  assert.deepEqual(durationOptions(5), [5, 15])
+  assert.deepEqual(durationOptions(60), [45, 60, 90])
+  assert.deepEqual(durationOptions(50), [45, 50, 60])
+})
+
+test('halfSides: short and done early blocks take half, and an overlapped block takes the other half', () => {
+  const first = 16
+  const top = (h: number) => (Math.max(h, first) - first) * 48
+  const today = [
+    block('carve', at(18, 15), at(19, 15)),
+    block('followup', at(19, 15), at(19, 27)),
+    block('washer', at(19, 29), at(20, 29)),
+    block('skool', at(20, 29), at(20, 44)),
+    block('linkedin', at(20, 44), at(20, 59)),
+  ]
+  assert.deepEqual(Object.fromEntries(halfSides(today, top, 20)), {
+    followup: 'left',
+    washer: 'right',
+    skool: 'left',
+    linkedin: 'right',
+  })
+  assert.equal(halfSides([block('a', 10, 11), block('b', 12, 13)], top, 20).size, 0)
+  assert.deepEqual(Object.fromEntries(halfSides([block('early', 21, 22, { doneEarly: true })], top, 20)), {
+    early: 'left',
+  })
+})

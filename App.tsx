@@ -21,20 +21,28 @@ import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import { ChevronLeft, ChevronRight, GripVertical, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
 import { supabase } from './src/supabase'
-
-type CalItem = {
-  id: string
-  title: string
-  start: number
-  end: number
-  kind: 'block' | 'task'
-  done: boolean
-  habitId?: string | null
-  source?: string
-  // Marked done before its start time
-  doneEarly?: boolean
-}
-type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
+import {
+  type CalItem,
+  type Move,
+  type Status,
+  type Todo,
+  clock,
+  donePlan,
+  durationOptions,
+  fillStart,
+  halfSides,
+  hoursOf,
+  isDoneEarly,
+  menuOptions,
+  notStartedPlan,
+  placeHabits,
+  relayout,
+  resizePlan,
+  shiftDay,
+  startNowPlan,
+  timeOf,
+  toDayString,
+} from './src/schedule'
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
@@ -46,8 +54,6 @@ const SHORT_MIN_PX = 20
 const LOOKBACK_HOURS = 3
 const LOOKAHEAD_HOURS = 5
 const LAST_HOUR = 24
-// New items fill one-hour blocks, starting here or after the day's last block
-const FILL_FROM_HOUR = 15
 
 const c = {
   bg: '#fafaf7',
@@ -65,73 +71,14 @@ const c = {
   now: '#c0392b',
 }
 
-function toDayString(d: Date) {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function shiftDay(day: string, by: number) {
-  const [y, m, d] = day.split('-').map(Number)
-  return toDayString(new Date(y, m - 1, d + by))
-}
-
 function dayLabel(day: string) {
   const [y, m, d] = day.split('-').map(Number)
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
 }
 
-// "13:30:00" -> 13.5
-function hoursOf(time: string) {
-  const [h, m] = time.split(':').map(Number)
-  return h + m / 60
-}
-
-// 15.5 -> "15:30:00"
-function timeOf(hours: number) {
-  const total = Math.round(hours * 60)
-  const h = Math.floor(total / 60)
-  const m = total % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
-}
-
-// The local Date for an hour of a "YYYY-MM-DD" day
-function dateAt(day: string, hours: number) {
-  const [y, m, d] = day.split('-').map(Number)
-  const total = Math.round(hours * 60)
-  return new Date(y, m - 1, d, Math.floor(total / 60), total % 60)
-}
-
 function nowHours() {
   const now = new Date()
   return now.getHours() + now.getMinutes() / 60
-}
-
-function nextQuarterHour() {
-  const now = new Date()
-  return Math.ceil((now.getHours() + now.getMinutes() / 60) * 4) / 4
-}
-
-// The first gap at or after `from` that fits `length` hours between the day's
-// blocks, or null if nothing fits before midnight.
-function freeSlot(items: CalItem[], from: number, length: number) {
-  let cursor = from
-  for (const it of [...items].sort((a, b) => a.start - b.start)) {
-    if (it.end <= cursor) continue
-    if (it.start - cursor >= length - 1e-6) return cursor
-    cursor = Math.max(cursor, it.end)
-  }
-  return cursor + length <= 24 + 1e-6 ? cursor : null
-}
-
-function clock(hours: number) {
-  const total = Math.round(hours * 60)
-  const h = Math.floor(total / 60) % 24
-  const m = total % 60
-  const suffix = h < 12 ? 'am' : 'pm'
-  const h12 = h % 12 === 0 ? 12 : h % 12
-  return m ? `${h12}:${String(m).padStart(2, '0')}${suffix}` : `${h12}${suffix}`
 }
 
 export default function App() {
@@ -202,7 +149,6 @@ function SignIn() {
 
 type Tab = 'todos' | 'agenda'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
-type Todo = { id: string; title: string; day: string; start: number; end: number; habit: boolean }
 type Menu = { item: CalItem; x: number; y: number }
 
 function DayPage() {
@@ -230,7 +176,7 @@ function DayPage() {
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
       const end = b.end_time ? hoursOf(b.end_time) : start + 0.5
-      const doneEarly = !!(b.done && b.done_at && new Date(b.done_at) < dateAt(day, start))
+      const doneEarly = isDoneEarly(b.done, b.done_at, day, start)
       return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source, doneEarly }
     })
     const tasks: CalItem[] = (taskRes.data ?? []).map((t) => {
@@ -240,38 +186,29 @@ function DayPage() {
     return [...blocks, ...tasks].sort((a, b) => a.start - b.start)
   }, [day])
 
-  // Today, every habit without a block yet goes into the first gap that fits it,
-  // starting from now. The (habit_id, day) unique index keeps a racing load from
-  // placing one twice.
-  const placeHabits = useCallback(
+  // Today, every habit without a block yet goes into the first gap that fits it.
+  // The (habit_id, day) unique index keeps a racing load from placing one twice.
+  const placeHabitBlocks = useCallback(
     async (current: CalItem[]) => {
       const { data: habits, error } = await supabase.from('cass_habits').select('id,title,minutes').order('sort_order')
       if (error) return setError(error.message), false
-      const placed = new Set(current.map((it) => it.habitId).filter(Boolean))
-      const occupied = [...current]
-      let added = false
-      for (const h of habits ?? []) {
-        if (placed.has(h.id)) continue
-        const length = h.minutes / 60
-        const start = freeSlot(occupied, nextQuarterHour(), length)
-        if (start === null) continue
+      const placements = placeHabits(current, habits ?? [], nowHours())
+      for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
           {
             day,
-            title: h.title,
-            start_time: timeOf(start),
-            end_time: timeOf(start + length),
+            title: p.title,
+            start_time: timeOf(p.start),
+            end_time: timeOf(p.end),
             kind: 'personal',
             source: 'habit',
-            habit_id: h.id,
+            habit_id: p.habitId,
           },
           { onConflict: 'habit_id,day', ignoreDuplicates: true },
         )
-        if (insertError) return setError(insertError.message), added
-        occupied.push({ id: h.id, title: h.title, start, end: start + length, kind: 'block', done: false, habitId: h.id })
-        added = true
+        if (insertError) return setError(insertError.message), true
       }
-      return added
+      return placements.length > 0
     },
     [day],
   )
@@ -288,7 +225,7 @@ function DayPage() {
       .order('start_time')
     if (todoRes.error) setError(todoRes.error.message)
     let current = await fetchItems()
-    if (day === today && (await placeHabits(current))) current = await fetchItems()
+    if (day === today && (await placeHabitBlocks(current))) current = await fetchItems()
     setItems(current)
     setTodos(
       (todoRes.data ?? []).map((t) => {
@@ -297,151 +234,80 @@ function DayPage() {
       }),
     )
     setLoading(false)
-  }, [day, today, fetchItems, placeHabits])
+  }, [day, today, fetchItems, placeHabitBlocks])
 
   useEffect(() => {
     load()
   }, [load])
 
-  const add = async () => {
-    const title = draft.trim()
-    if (!title) return
-    setDraft('')
-    const start = Math.max(FILL_FROM_HOUR, ...items.map((it) => it.end))
-    if (start + 1 > 24) return setError('No room left today after the last block')
-    const { error } = await supabase
-      .from('cass_time_blocks')
-      .insert({ day, title, start_time: timeOf(start), end_time: timeOf(start + 1), kind: 'personal', source: 'app' })
-    if (error) return setError(error.message)
-    load()
-  }
-
-  // Done turns the block green. Not started moves it, same length, to start when the
-  // day's last other block ends (or at the next quarter hour, if that's already past).
-  // Follow-up adds a 30 minute block after the day's last block.
-  const setStatus = async (item: CalItem, status: Status) => {
-    const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
-    // Start now moves the block to start this minute, and the day's later todos,
-    // follow-ups and habits that aren't done shift down by the same amount.
-    if (status === 'start_now') {
-      const start = Math.floor(nowHours() * 60) / 60
-      const delta = start - item.start
-      if (delta <= 0) return
-      const later = items.filter(
-        (it) =>
-          it.id !== item.id &&
-          it.kind === 'block' &&
-          !it.done &&
-          (it.source === 'app' || it.source === 'habit') &&
-          it.start >= item.start,
-      )
-      if (Math.max(item.end, ...later.map((it) => it.end)) + delta > 24) return setError('That runs past midnight')
-      const updates = [item, ...later].map((it) => ({ it, start: it.start + delta, end: it.end + delta }))
-      const results = await Promise.all(
-        updates.map(({ it, start, end }) =>
-          supabase
-            .from(it.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks')
-            .update({ start_time: timeOf(start), end_time: timeOf(end) })
-            .eq('id', it.id),
-        ),
-      )
-      const failed = results.find((r) => r.error)
-      if (failed?.error) setError(failed.error.message)
-      return load()
-    }
-    if (status === 'follow_up') {
-      const start = Math.max(FILL_FROM_HOUR, ...items.map((it) => it.end))
-      if (start + 0.5 > 24) return setError('No room left today for a follow-up')
-      const { error } = await supabase.from('cass_time_blocks').insert({
-        day,
-        title: `Follow up: ${item.title}`,
-        start_time: timeOf(start),
-        end_time: timeOf(start + 0.5),
-        kind: 'personal',
-        source: 'app',
-      })
-      if (error) return setError(error.message)
-      return load()
-    }
-    // Done on a block under way ends it this minute. Done is stamped with when it
-    // happened, so a block done before it starts can render as done early.
-    if (status === 'done') {
-      const now = Math.floor(nowHours() * 60) / 60
-      const underWay = day === today && item.start < now && now < item.end
-      const update: Record<string, unknown> = { done: true }
-      if (item.kind === 'block') update.done_at = new Date().toISOString()
-      if (underWay) update.end_time = timeOf(now)
-      const { error } = await supabase.from(table).update(update).eq('id', item.id)
-      if (error) return setError(error.message)
-      // Ending early frees the rest of its slot, so the day's later todos and
-      // habits that aren't done move up by the same amount.
-      if (underWay) {
-        const delta = now - item.end
-        const later = items.filter(
-          (it) =>
-            it.id !== item.id &&
-            it.kind === 'block' &&
-            !it.done &&
-            (it.source === 'app' || it.source === 'habit') &&
-            it.start >= item.end - 1e-6,
-        )
-        const results = await Promise.all(
-          later.map((it) =>
-            supabase
-              .from('cass_time_blocks')
-              .update({ start_time: timeOf(it.start + delta), end_time: timeOf(it.end + delta) })
-              .eq('id', it.id),
-          ),
-        )
-        const failed = results.find((r) => r.error)
-        if (failed?.error) setError(failed.error.message)
-      }
-      return load()
-    }
-    const length = item.end - item.start
-    const nextQuarter = nextQuarterHour()
-    const others = items.filter((it) => it.id !== item.id)
-    // A habit moves forward into the next gap that fits it
-    if (item.habitId) {
-      const start = freeSlot(others, day === today ? Math.max(item.end, nextQuarter) : item.end, length)
-      if (start === null) return setError('No gap left today for that habit')
-      const { error } = await supabase
-        .from('cass_time_blocks')
-        .update({ done: false, start_time: timeOf(start), end_time: timeOf(start + length) })
-        .eq('id', item.id)
-      if (error) return setError(error.message)
-      return load()
-    }
-    const lastEnd = Math.max(item.start, ...others.map((it) => it.end))
-    const start = day === today ? Math.max(lastEnd, nextQuarter) : lastEnd
-    if (start + length > 24) return setError('No room left today to move that block')
-    const { error } = await supabase
-      .from(table)
-      .update({ done: false, start_time: timeOf(start), end_time: timeOf(start + length) })
-      .eq('id', item.id)
-    if (error) return setError(error.message)
-    load()
-  }
-
-  // A new length moves this todo's end, and the same day's later todos shift by the
-  // same amount so the chain stays back to back.
-  const setMinutes = async (todo: Todo, minutes: number) => {
-    const delta = todo.start + minutes / 60 - todo.end
-    if (!delta) return
-    const later = todos.filter((t) => t.day === todo.day && t.id !== todo.id && t.start >= todo.end - 1e-6)
-    if (Math.max(todo.end, ...later.map((t) => t.end)) + delta > 24) return setError('That runs past midnight')
-    const updates = [
-      { id: todo.id, start: todo.start, end: todo.end + delta },
-      ...later.map((t) => ({ id: t.id, start: t.start + delta, end: t.end + delta })),
-    ]
+  // Saves new times for every moved block, then reloads
+  const saveMoves = async (moves: Move[]) => {
     const results = await Promise.all(
-      updates.map((u) =>
-        supabase.from('cass_time_blocks').update({ start_time: timeOf(u.start), end_time: timeOf(u.end) }).eq('id', u.id),
+      moves.map((m) =>
+        supabase
+          .from(m.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks')
+          .update({ start_time: timeOf(m.start), end_time: timeOf(m.end) })
+          .eq('id', m.id),
       ),
     )
     const failed = results.find((r) => r.error)
     if (failed?.error) setError(failed.error.message)
     load()
+  }
+
+  const insertBlock = async (title: string, length: number, label: string) => {
+    const start = fillStart(items, length)
+    if (start === null) return setError(`No room left today for ${label}`)
+    const { error } = await supabase
+      .from('cass_time_blocks')
+      .insert({ day, title, start_time: timeOf(start), end_time: timeOf(start + length), kind: 'personal', source: 'app' })
+    if (error) return setError(error.message)
+    load()
+  }
+
+  const add = async () => {
+    const title = draft.trim()
+    if (!title) return
+    setDraft('')
+    insertBlock(title, 1, 'that todo')
+  }
+
+  // The rules for each menu option live in src/schedule.ts
+  const setStatus = async (item: CalItem, status: Status) => {
+    const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
+    const isToday = day === today
+    const now = nowHours()
+
+    if (status === 'start_now') {
+      const plan = startNowPlan(items, item, now)
+      if ('error' in plan) return setError(plan.error)
+      if (plan.moves.length) saveMoves(plan.moves)
+      return
+    }
+    if (status === 'follow_up') return insertBlock(`Follow up: ${item.title}`, 0.5, 'a follow-up')
+    if (status === 'done') {
+      const plan = donePlan(items, item, isToday, now)
+      const update: Record<string, unknown> = { done: true }
+      if (item.kind === 'block') update.done_at = new Date().toISOString()
+      if (plan.endAt !== null) update.end_time = timeOf(plan.endAt)
+      const { error } = await supabase.from(table).update(update).eq('id', item.id)
+      if (error) return setError(error.message)
+      return saveMoves(plan.moves)
+    }
+    const plan = notStartedPlan(items, item, isToday, now)
+    if ('error' in plan) return setError(plan.error)
+    const { error } = await supabase
+      .from(table)
+      .update({ done: false, start_time: timeOf(plan.start), end_time: timeOf(plan.end) })
+      .eq('id', item.id)
+    if (error) return setError(error.message)
+    load()
+  }
+
+  const setMinutes = async (todo: Todo, minutes: number) => {
+    const plan = resizePlan(todos, todo, minutes)
+    if ('error' in plan) return setError(plan.error)
+    if (plan.moves.length) saveMoves(plan.moves)
   }
 
   if (view === 'habits') return <HabitsScreen onBack={() => setView('day')} />
@@ -536,7 +402,7 @@ function DayPage() {
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
           {menu ? (
             <View style={[styles.menu, { top: menu.y + 12, right: Math.max(8, width - menu.x - 12) }]}>
-              {menuOptions(menu.item, day, today).map(([status, label]) => (
+              {menuOptions(menu.item, day, today, nowHours()).map(([status, label]) => (
                 <Pressable
                   key={status}
                   style={styles.menuItem}
@@ -624,56 +490,7 @@ function HabitsScreen({ onBack }: { onBack: () => void }) {
   )
 }
 
-// Start now shows once a block's start has passed today. Not started shows only
-// once the block's end has passed (any earlier day counts). Add follow-up hides
-// while the block is under way.
-function menuOptions(item: CalItem, day: string, today: string) {
-  const now = nowHours()
-  const isToday = day === today
-  const inProgress = isToday && item.start <= now && now < item.end
-  const ended = day < today || (isToday && item.end <= now)
-  const options: [Status, string][] = []
-  if (isToday && !item.done && item.start < Math.floor(now * 60) / 60) options.push(['start_now', 'Start now'])
-  options.push(['done', 'Done'])
-  if (ended) options.push(['not_started', 'Not started'])
-  if (!inProgress) options.push(['follow_up', 'Add follow-up'])
-  return options
-}
-
-// The todos whose order changed, per day, laid back to back from where the first
-// of them started. Todos outside the changed range keep their times.
-function relayout(before: Todo[], after: Todo[]) {
-  const updates: { id: string; start: number; end: number }[] = []
-  for (const day of new Set(before.map((t) => t.day))) {
-    const old = before.filter((t) => t.day === day)
-    const next = after.filter((t) => t.day === day)
-    let i = 0
-    while (i < old.length && old[i].id === next[i].id) i++
-    if (i === old.length) continue
-    let j = old.length - 1
-    while (j > i && old[j].id === next[j].id) j--
-    let cursor = old[i].start
-    for (const t of next.slice(i, j + 1)) {
-      const length = t.end - t.start
-      if (Math.abs(t.start - cursor) > 1e-6) updates.push({ id: t.id, start: cursor, end: cursor + length })
-      cursor += length
-    }
-  }
-  return updates
-}
-
 const ROW_FALLBACK_PX = 56
-
-// Lengths a todo can step through, in minutes
-const DURATION_STEPS = [5, 15, 30, 45, 60, 90, 120, 180, 240]
-
-// The current length with the next shorter step to its left and the next
-// longer step to its right (30 -> 15, 30, 45; 15 -> 5, 15, 30).
-function durationOptions(minutes: number) {
-  const shorter = [...DURATION_STEPS].reverse().find((m) => m < minutes)
-  const longer = DURATION_STEPS.find((m) => m > minutes)
-  return [shorter, minutes, longer].filter((m): m is number => m !== undefined)
-}
 
 function TodoList({
   todos,
@@ -861,18 +678,7 @@ function DayGrid({
   // that a half block's minimum height spills into takes the other half.
   const [gridWidth, setGridWidth] = useState(0)
   const column = Math.max(0, gridWidth - EVENT_LEFT - EVENT_RIGHT)
-  const side = new Map<string, 'left' | 'right'>()
-  type Half = { bottom: number; side: 'left' | 'right' }
-  let prevShort = null as Half | null
-  for (const it of visible) {
-    const t = top(it.start) + 1
-    const prev = prevShort
-    const overlapsPrev: boolean = prev !== null && prev.bottom > t
-    if (it.end - it.start >= 0.5 && !it.doneEarly && !overlapsPrev) continue
-    const s: 'left' | 'right' = overlapsPrev && prev?.side === 'left' ? 'right' : 'left'
-    side.set(it.id, s)
-    prevShort = { bottom: Math.max(t + SHORT_MIN_PX, top(it.end) - 1), side: s }
-  }
+  const side = halfSides(visible, top, SHORT_MIN_PX)
 
   return (
     <View
