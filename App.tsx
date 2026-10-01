@@ -31,6 +31,8 @@ type CalItem = {
   done: boolean
   habitId?: string | null
   source?: string
+  // Marked done before its start time
+  doneEarly?: boolean
 }
 type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
 
@@ -56,6 +58,9 @@ const c = {
   accent: '#2f5d50',
   block: '#e6efe9',
   blockDone: '#4ade80',
+  doneEarly: '#4a4a48',
+  onDark: '#ffffff',
+  onDarkMuted: '#e4e2dc',
   task: '#efe9df',
   now: '#c0392b',
 }
@@ -89,6 +94,13 @@ function timeOf(hours: number) {
   const h = Math.floor(total / 60)
   const m = total % 60
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
+}
+
+// The local Date for an hour of a "YYYY-MM-DD" day
+function dateAt(day: string, hours: number) {
+  const [y, m, d] = day.split('-').map(Number)
+  const total = Math.round(hours * 60)
+  return new Date(y, m - 1, d, Math.floor(total / 60), total % 60)
 }
 
 function nowHours() {
@@ -210,7 +222,7 @@ function DayPage() {
 
   const fetchItems = useCallback(async () => {
     const [blockRes, taskRes] = await Promise.all([
-      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done,habit_id,source').eq('day', day).order('start_time'),
+      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done,habit_id,source,done_at').eq('day', day).order('start_time'),
       supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
     ])
     const err = blockRes.error ?? taskRes.error
@@ -218,7 +230,8 @@ function DayPage() {
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
       const end = b.end_time ? hoursOf(b.end_time) : start + 0.5
-      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source }
+      const doneEarly = !!(b.done && b.done_at && new Date(b.done_at) < dateAt(day, start))
+      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source, doneEarly }
     })
     const tasks: CalItem[] = (taskRes.data ?? []).map((t) => {
       const start = hoursOf(t.start_time!)
@@ -350,8 +363,15 @@ function DayPage() {
       if (error) return setError(error.message)
       return load()
     }
+    // Done on a block under way ends it this minute. Done is stamped with when it
+    // happened, so a block done before it starts can render as done early.
     if (status === 'done') {
-      const { error } = await supabase.from(table).update({ done: true }).eq('id', item.id)
+      const now = Math.floor(nowHours() * 60) / 60
+      const underWay = day === today && item.start < now && now < item.end
+      const update: Record<string, unknown> = { done: true }
+      if (item.kind === 'block') update.done_at = new Date().toISOString()
+      if (underWay) update.end_time = timeOf(now)
+      const { error } = await supabase.from(table).update(update).eq('id', item.id)
       if (error) return setError(error.message)
       return load()
     }
@@ -814,18 +834,18 @@ function DayGrid({
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
   const visible = items.filter((it) => it.end > first && it.start < last)
 
-  // Blocks under 30 minutes take half the column. Back to back short blocks
-  // alternate halves so their minimum height doesn't make them overlap.
+  // Blocks under 30 minutes, and blocks done early, take half the column. Back to
+  // back half blocks alternate halves so they don't overlap.
   const [gridWidth, setGridWidth] = useState(0)
   const column = Math.max(0, gridWidth - EVENT_LEFT - EVENT_RIGHT)
   const side = new Map<string, 'left' | 'right'>()
   let prevShort: { bottom: number; side: 'left' | 'right' } | null = null
   for (const it of visible) {
-    if (it.end - it.start >= 0.5) continue
+    if (it.end - it.start >= 0.5 && !it.doneEarly) continue
     const t = top(it.start) + 1
     const s: 'left' | 'right' = prevShort && prevShort.bottom > t && prevShort.side === 'left' ? 'right' : 'left'
     side.set(it.id, s)
-    prevShort = { bottom: t + SHORT_MIN_PX, side: s }
+    prevShort = { bottom: Math.max(t + SHORT_MIN_PX, top(it.end) - 1), side: s }
   }
 
   return (
@@ -840,6 +860,10 @@ function DayGrid({
       ))}
       {visible.map((it) => {
         const half = side.get(it.id)
+        const height = Math.max(top(it.end) - top(it.start) - 2, half ? SHORT_MIN_PX : 20)
+        // Too short for a second line, so only the title shows
+        const compact = height < 34
+        const dark = it.doneEarly
         return (
           <View
             key={`${it.kind}-${it.id}`}
@@ -852,25 +876,25 @@ function DayGrid({
                 : null,
               {
                 top: top(it.start) + 1,
-                height: Math.max(top(it.end) - top(it.start) - 2, half ? SHORT_MIN_PX : 20),
-                backgroundColor: it.done ? c.blockDone : it.kind === 'block' ? c.block : c.task,
+                height,
+                backgroundColor: dark ? c.doneEarly : it.done ? c.blockDone : it.kind === 'block' ? c.block : c.task,
               },
             ]}
           >
-            <Text style={styles.eventText} numberOfLines={1}>
+            <Text style={[styles.eventText, dark && { color: c.onDark }]} numberOfLines={1}>
               {it.title}
             </Text>
-            {half ? null : (
-              <Text style={[styles.eventTime, it.done && styles.eventTimeDone]}>
+            {compact ? null : (
+              <Text style={[styles.eventTime, it.done && styles.eventTimeDone, dark && { color: c.onDarkMuted }]}>
                 {clock(it.start)}–{clock(it.end)}
               </Text>
             )}
             <Pressable
-              style={[styles.more, half && styles.moreShort]}
+              style={[styles.more, compact && styles.moreShort]}
               hitSlop={10}
               onPress={(e) => onMore(it, e.nativeEvent.pageX, e.nativeEvent.pageY)}
             >
-              <MoreHorizontal size={half ? 16 : 18} color={c.ink} />
+              <MoreHorizontal size={compact ? 16 : 18} color={dark ? c.onDark : c.ink} />
             </Pressable>
           </View>
         )
