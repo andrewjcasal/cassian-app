@@ -289,9 +289,14 @@ function DayPage() {
             <Text style={styles.title}>{day === today ? 'Today' : dayLabel(day)}</Text>
             {day === today ? <Text style={styles.subtitle}>{dayLabel(day)}</Text> : null}
           </Pressable>
-          <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
-            <ChevronRight size={22} color={c.ink} />
-          </Pressable>
+          <View style={styles.headerRight}>
+            <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
+              <ChevronRight size={22} color={c.ink} />
+            </Pressable>
+            <Pressable onPress={() => supabase.auth.signOut()} hitSlop={10} accessibilityLabel="Sign out">
+              <LogOut size={18} color={c.muted} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.tabs}>
@@ -333,10 +338,6 @@ function DayPage() {
           <DayGrid items={items} showNow={day === today} onMore={(item, x, y) => setMenu({ item, x, y })} />
         )}
 
-        <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
-          <LogOut size={14} color={c.muted} />
-          <Text style={styles.signOutText}>Sign out</Text>
-        </Pressable>
       </ScrollView>
 
       <Modal visible={menu !== null} transparent animationType="none" onRequestClose={() => setMenu(null)}>
@@ -460,6 +461,7 @@ const styles = StyleSheet.create({
   page: { padding: 12, paddingBottom: 40 },
   signIn: { flex: 1, padding: 16, justifyContent: 'center', gap: 10 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
   subtitle: { fontSize: 14, color: c.muted, textAlign: 'center' },
   card: { backgroundColor: c.card, borderRadius: 10, borderWidth: 1, borderColor: c.line, padding: 4 },
@@ -515,6 +517,4 @@ const styles = StyleSheet.create({
   button: { backgroundColor: c.accent, borderRadius: 8, padding: 12, alignItems: 'center' },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
   error: { color: c.now, fontSize: 14, marginVertical: 4 },
-  signOut: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 20 },
-  signOutText: { fontSize: 13, color: c.muted },
 })
