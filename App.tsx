@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -10,6 +11,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
@@ -269,7 +271,9 @@ function DayGrid({
   showNow: boolean
   onStatus: (item: CalItem, status: Status) => void
 }) {
-  const [menuFor, setMenuFor] = useState<string | null>(null)
+  // Where the "..." was tapped, so the menu opens beside it in a full-screen modal
+  const { width } = useWindowDimensions()
+  const [menu, setMenu] = useState<{ item: CalItem; x: number; y: number } | null>(null)
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
   const first = showNow ? Math.max(0, Math.floor(nowHours) - LOOKBACK_HOURS) : FIRST_HOUR
@@ -305,35 +309,37 @@ function DayGrid({
           <Pressable
             style={styles.more}
             hitSlop={10}
-            onPress={() => setMenuFor(menuFor === it.id ? null : it.id)}
+            onPress={(e) => setMenu({ item: it, x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })}
           >
             <MoreHorizontal size={18} color={c.ink} />
           </Pressable>
         </View>
       ))}
-      {visible
-        .filter((it) => it.id === menuFor)
-        .map((it) => (
-          <View key="menu" style={[styles.menu, { top: top(it.start) + 28 }]}>
-            {(
-              [
-                ['done', 'Done'],
-                ['not_started', 'Not started'],
-              ] as const
-            ).map(([status, label]) => (
-              <Pressable
-                key={status}
-                style={styles.menuItem}
-                onPress={() => {
-                  setMenuFor(null)
-                  onStatus(it, status)
-                }}
-              >
-                <Text style={styles.menuText}>{label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ))}
+      <Modal visible={menu !== null} transparent animationType="none" onRequestClose={() => setMenu(null)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
+          {menu ? (
+            <View style={[styles.menu, { top: menu.y + 12, right: Math.max(8, width - menu.x - 12) }]}>
+              {(
+                [
+                  ['done', 'Done'],
+                  ['not_started', 'Not started'],
+                ] as const
+              ).map(([status, label]) => (
+                <Pressable
+                  key={status}
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setMenu(null)
+                    onStatus(menu.item, status)
+                  }}
+                >
+                  <Text style={styles.menuText}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </Pressable>
+      </Modal>
       {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
