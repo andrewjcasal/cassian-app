@@ -473,7 +473,7 @@ function DayPage() {
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
           {menu ? (
             <View style={[styles.menu, { top: menu.y + 12, right: Math.max(8, width - menu.x - 12) }]}>
-              {menuOptions(menu.item, day === today).map(([status, label]) => (
+              {menuOptions(menu.item, day, today).map(([status, label]) => (
                 <Pressable
                   key={status}
                   style={styles.menuItem}
@@ -561,14 +561,18 @@ function HabitsScreen({ onBack }: { onBack: () => void }) {
   )
 }
 
-// Start now shows once a block's start has passed today; Add follow-up hides
+// Start now shows once a block's start has passed today. Not started shows only
+// once the block's end has passed (any earlier day counts). Add follow-up hides
 // while the block is under way.
-function menuOptions(item: CalItem, isToday: boolean) {
+function menuOptions(item: CalItem, day: string, today: string) {
   const now = nowHours()
+  const isToday = day === today
   const inProgress = isToday && item.start <= now && now < item.end
+  const ended = day < today || (isToday && item.end <= now)
   const options: [Status, string][] = []
   if (isToday && !item.done && item.start < Math.floor(now * 60) / 60) options.push(['start_now', 'Start now'])
-  options.push(['done', 'Done'], ['not_started', 'Not started'])
+  options.push(['done', 'Done'])
+  if (ended) options.push(['not_started', 'Not started'])
   if (!inProgress) options.push(['follow_up', 'Add follow-up'])
   return options
 }
