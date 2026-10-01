@@ -189,8 +189,8 @@ function SignIn() {
 }
 
 type Tab = 'todos' | 'agenda'
-// A todo is a block added from this app that isn't done yet, on any day
-type Todo = { id: string; title: string; day: string; start: number; end: number }
+// A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
+type Todo = { id: string; title: string; day: string; start: number; end: number; habit: boolean }
 type Menu = { item: CalItem; x: number; y: number }
 
 function DayPage() {
@@ -268,8 +268,8 @@ function DayPage() {
     setError(null)
     const todoRes = await supabase
       .from('cass_time_blocks')
-      .select('id,title,day,start_time,end_time')
-      .eq('source', 'app')
+      .select('id,title,day,start_time,end_time,habit_id')
+      .in('source', ['app', 'habit'])
       .eq('done', false)
       .order('day')
       .order('start_time')
@@ -280,7 +280,7 @@ function DayPage() {
     setTodos(
       (todoRes.data ?? []).map((t) => {
         const start = hoursOf(t.start_time)
-        return { id: t.id, title: t.title, day: t.day, start, end: t.end_time ? hoursOf(t.end_time) : start + 1 }
+        return { id: t.id, title: t.title, day: t.day, start, end: t.end_time ? hoursOf(t.end_time) : start + 1, habit: !!t.habit_id }
       }),
     )
     setLoading(false)
@@ -772,6 +772,7 @@ function TodoRow({
       <View style={{ flex: 1 }}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
+          {todo.habit ? 'Habit · ' : ''}
           {todo.day === today ? '' : `${dayLabel(todo.day)} · `}
           {clock(todo.start)}
         </Text>
