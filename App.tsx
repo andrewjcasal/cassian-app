@@ -27,8 +27,9 @@ type CalItem = {
   kind: 'block' | 'task'
   done: boolean
   habitId?: string | null
+  source?: string
 }
-type Status = 'done' | 'not_started' | 'follow_up'
+type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
@@ -81,9 +82,15 @@ function hoursOf(time: string) {
 
 // 15.5 -> "15:30:00"
 function timeOf(hours: number) {
-  const h = Math.floor(hours)
-  const m = Math.round((hours - h) * 60)
+  const total = Math.round(hours * 60)
+  const h = Math.floor(total / 60)
+  const m = total % 60
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
+}
+
+function nowHours() {
+  const now = new Date()
+  return now.getHours() + now.getMinutes() / 60
 }
 
 function nextQuarterHour() {
@@ -104,8 +111,9 @@ function freeSlot(items: CalItem[], from: number, length: number) {
 }
 
 function clock(hours: number) {
-  const h = Math.floor(hours) % 24
-  const m = Math.round((hours - Math.floor(hours)) * 60)
+  const total = Math.round(hours * 60)
+  const h = Math.floor(total / 60) % 24
+  const m = total % 60
   const suffix = h < 12 ? 'am' : 'pm'
   const h12 = h % 12 === 0 ? 12 : h % 12
   return m ? `${h12}:${String(m).padStart(2, '0')}${suffix}` : `${h12}${suffix}`
@@ -198,7 +206,7 @@ function DayPage() {
 
   const fetchItems = useCallback(async () => {
     const [blockRes, taskRes] = await Promise.all([
-      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done,habit_id').eq('day', day).order('start_time'),
+      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done,habit_id,source').eq('day', day).order('start_time'),
       supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
     ])
     const err = blockRes.error ?? taskRes.error
@@ -206,7 +214,7 @@ function DayPage() {
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
       const end = b.end_time ? hoursOf(b.end_time) : start + 0.5
-      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id }
+      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source }
     })
     const tasks: CalItem[] = (taskRes.data ?? []).map((t) => {
       const start = hoursOf(t.start_time!)
@@ -296,6 +304,34 @@ function DayPage() {
   // Follow-up adds a 30 minute block after the day's last block.
   const setStatus = async (item: CalItem, status: Status) => {
     const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
+    // Start now moves the block to start this minute, and the day's later todos,
+    // follow-ups and habits that aren't done shift down by the same amount.
+    if (status === 'start_now') {
+      const start = Math.floor(nowHours() * 60) / 60
+      const delta = start - item.start
+      if (delta <= 0) return
+      const later = items.filter(
+        (it) =>
+          it.id !== item.id &&
+          it.kind === 'block' &&
+          !it.done &&
+          (it.source === 'app' || it.source === 'habit') &&
+          it.start >= item.start,
+      )
+      if (Math.max(item.end, ...later.map((it) => it.end)) + delta > 24) return setError('That runs past midnight')
+      const updates = [item, ...later].map((it) => ({ it, start: it.start + delta, end: it.end + delta }))
+      const results = await Promise.all(
+        updates.map(({ it, start, end }) =>
+          supabase
+            .from(it.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks')
+            .update({ start_time: timeOf(start), end_time: timeOf(end) })
+            .eq('id', it.id),
+        ),
+      )
+      const failed = results.find((r) => r.error)
+      if (failed?.error) setError(failed.error.message)
+      return load()
+    }
     if (status === 'follow_up') {
       const start = Math.max(FILL_FROM_HOUR, ...items.map((it) => it.end))
       if (start + 0.5 > 24) return setError('No room left today for a follow-up')
@@ -437,13 +473,7 @@ function DayPage() {
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
           {menu ? (
             <View style={[styles.menu, { top: menu.y + 12, right: Math.max(8, width - menu.x - 12) }]}>
-              {(
-                [
-                  ['done', 'Done'],
-                  ['not_started', 'Not started'],
-                  ['follow_up', 'Add follow-up'],
-                ] as const
-              ).map(([status, label]) => (
+              {menuOptions(menu.item, day === today).map(([status, label]) => (
                 <Pressable
                   key={status}
                   style={styles.menuItem}
@@ -529,6 +559,18 @@ function HabitsScreen({ onBack }: { onBack: () => void }) {
       </View>
     </ScrollView>
   )
+}
+
+// Start now shows once a block's start has passed today; Add follow-up hides
+// while the block is under way.
+function menuOptions(item: CalItem, isToday: boolean) {
+  const now = nowHours()
+  const inProgress = isToday && item.start <= now && now < item.end
+  const options: [Status, string][] = []
+  if (isToday && !item.done && item.start < Math.floor(now * 60) / 60) options.push(['start_now', 'Start now'])
+  options.push(['done', 'Done'], ['not_started', 'Not started'])
+  if (!inProgress) options.push(['follow_up', 'Add follow-up'])
+  return options
 }
 
 function TodoRow({ todo, today, onMinutes }: { todo: Todo; today: string; onMinutes: (minutes: number) => void }) {
