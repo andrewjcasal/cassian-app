@@ -36,6 +36,7 @@ const c = {
   line: '#e4e2dc',
   accent: '#2f5d50',
   block: '#e6efe9',
+  blockDone: '#4ade80',
   task: '#efe9df',
   now: '#c0392b',
 }
@@ -291,14 +292,14 @@ function DayGrid({
             {
               top: top(it.start) + 1,
               height: Math.max(top(it.end) - top(it.start) - 2, 20),
-              backgroundColor: it.kind === 'block' ? c.block : c.task,
+              backgroundColor: it.done ? c.blockDone : it.kind === 'block' ? c.block : c.task,
             },
           ]}
         >
-          <Text style={[styles.eventText, it.done && styles.done]} numberOfLines={1}>
+          <Text style={styles.eventText} numberOfLines={1}>
             {it.title}
           </Text>
-          <Text style={styles.eventTime}>
+          <Text style={[styles.eventTime, it.done && styles.eventTimeDone]}>
             {clock(it.start)}–{clock(it.end)}
           </Text>
           <Pressable
@@ -346,7 +347,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
   subtitle: { fontSize: 14, color: c.muted, textAlign: 'center' },
   card: { backgroundColor: c.card, borderRadius: 10, borderWidth: 1, borderColor: c.line, padding: 4 },
-  done: { color: c.muted, textDecorationLine: 'line-through' },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, marginBottom: 10 },
   addInput: { flex: 1, fontSize: 16, color: c.ink, paddingVertical: 10 },
   hourLine: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, borderTopColor: c.line },
@@ -354,6 +354,8 @@ const styles = StyleSheet.create({
   event: { position: 'absolute', left: 52, right: 6, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
   eventText: { fontSize: 14, fontWeight: '600', color: c.ink, marginRight: 24 },
   eventTime: { fontSize: 12, color: c.muted },
+  // muted gray is 3.98:1 on blockDone; ink is 9.79:1
+  eventTimeDone: { color: c.ink },
   more: { position: 'absolute', right: 6, top: 4 },
   menu: {
     position: 'absolute',
