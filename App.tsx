@@ -20,7 +20,7 @@ import { ChevronLeft, ChevronRight, LogOut, MoreHorizontal, Plus } from 'lucide-
 import { supabase } from './src/supabase'
 
 type CalItem = { id: string; title: string; start: number; end: number; kind: 'block' | 'task'; done: boolean }
-type Status = 'done' | 'not_started'
+type Status = 'done' | 'not_started' | 'follow_up'
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
@@ -217,8 +217,23 @@ function DayPage() {
 
   // Done turns the block green. Not started moves it, same length, to start when the
   // day's last other block ends (or at the next quarter hour, if that's already past).
+  // Follow-up adds a 30 minute block after the day's last block.
   const setStatus = async (item: CalItem, status: Status) => {
     const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
+    if (status === 'follow_up') {
+      const start = Math.max(FILL_FROM_HOUR, ...items.map((it) => it.end))
+      if (start + 0.5 > 24) return setError('No room left today for a follow-up')
+      const { error } = await supabase.from('cass_time_blocks').insert({
+        day,
+        title: `Follow up: ${item.title}`,
+        start_time: timeOf(start),
+        end_time: timeOf(start + 0.5),
+        kind: 'personal',
+        source: 'app',
+      })
+      if (error) return setError(error.message)
+      return load()
+    }
     if (status === 'done') {
       const { error } = await supabase.from(table).update({ done: true }).eq('id', item.id)
       if (error) return setError(error.message)
@@ -332,6 +347,7 @@ function DayPage() {
                 [
                   ['done', 'Done'],
                   ['not_started', 'Not started'],
+                  ['follow_up', 'Add follow-up'],
                 ] as const
               ).map(([status, label]) => (
                 <Pressable
