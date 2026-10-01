@@ -163,7 +163,8 @@ export function startNowPlan(items: CalItem[], item: CalItem, now: number): { mo
 // freed time. Done on any other block leaves the schedule alone.
 export function donePlan(items: CalItem[], item: CalItem, isToday: boolean, now: number) {
   const at = minuteOf(now)
-  const underWay = isToday && item.start < at && at < item.end
+  // Under way from its start minute, so Done right at the start still frees the slot
+  const underWay = isToday && item.start <= at && at < item.end
   if (!underWay) return { endAt: null as number | null, moves: [] as Move[] }
   const delta = at - item.end
   return { endAt: at as number | null, moves: carried(items, item, item.end).map((it) => shift(it, delta)) }

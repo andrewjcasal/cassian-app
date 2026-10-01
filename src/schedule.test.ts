@@ -115,6 +115,16 @@ test('Done on a block under way ends it now and moves later blocks up', () => {
   assert.deepEqual(fmt(plan.moves), ['washer@19:27-20:27', 'skool@20:27-20:42'])
 })
 
+test('Done at 3pm on a todo running until 4pm pulls the 4pm todos and habits back to 3pm', () => {
+  const later = [block('washer', 16, 17), block('skool', 17, at(17, 15), { source: 'habit', habitId: 'h1' })]
+  for (const start of [14, 15]) {
+    const current = block('current', start, 16)
+    const plan = donePlan([current, ...later], current, true, 15)
+    assert.equal(plan.endAt, 15, `started at ${start}`)
+    assert.deepEqual(fmt(plan.moves), ['washer@15:00-16:00', 'skool@16:00-16:15'], `started at ${start}`)
+  }
+})
+
 test('Done on a block that has not started, or is over, leaves the schedule alone', () => {
   const later = block('washer', at(19, 45), at(20, 45))
   assert.deepEqual(donePlan([later], later, true, at(19, 27)), { endAt: null, moves: [] })
