@@ -150,6 +150,8 @@ function SignIn() {
 type Tab = 'todos' | 'agenda'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
 type Menu = { item: CalItem; x: number; y: number }
+// What the tap-to-open card shows
+type Detail = { title: string; day: string; start: number; end: number }
 
 function DayPage() {
   const today = toDayString(new Date())
@@ -159,6 +161,7 @@ function DayPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
+  const [detail, setDetail] = useState<Detail | null>(null)
   const [dragging, setDragging] = useState(false)
   const [navMenu, setNavMenu] = useState<{ x: number; y: number } | null>(null)
   const [view, setView] = useState<'day' | 'habits'>('day')
@@ -376,7 +379,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} />
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail(t)} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -393,7 +396,12 @@ function DayPage() {
             </View>
           </View>
         ) : (
-          <DayGrid items={items} showNow={day === today} onMore={(item, x, y) => setMenu({ item, x, y })} />
+          <DayGrid
+            items={items}
+            showNow={day === today}
+            onMore={(item, x, y) => setMenu({ item, x, y })}
+            onOpen={(item) => setDetail({ title: item.title, day, start: item.start, end: item.end })}
+          />
         )}
 
       </ScrollView>
@@ -415,6 +423,25 @@ function DayPage() {
                 </Pressable>
               ))}
             </View>
+          ) : null}
+        </Pressable>
+      </Modal>
+
+      <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={() => setDetail(null)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setDetail(null)}>
+          {detail ? (
+            <Pressable style={styles.detailCard} onPress={() => {}}>
+              <Text style={styles.detailTitle}>{detail.title}</Text>
+              {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Start</Text>
+                <Text style={styles.detailValue}>{clock(detail.start)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>End</Text>
+                <Text style={styles.detailValue}>{clock(detail.end)}</Text>
+              </View>
+            </Pressable>
           ) : null}
         </Pressable>
       </Modal>
@@ -498,12 +525,14 @@ function TodoList({
   onMinutes,
   onReorder,
   onDragging,
+  onOpen,
 }: {
   todos: Todo[]
   today: string
   onMinutes: (todo: Todo, minutes: number) => void
   onReorder: (next: Todo[]) => void
   onDragging: (dragging: boolean) => void
+  onOpen: (todo: Todo) => void
 }) {
   const [drag, setDrag] = useState<{ id: string; from: number; to: number } | null>(null)
   const dy = useRef(new Animated.Value(0)).current
@@ -601,6 +630,7 @@ function TodoList({
               todo={t}
               today={today}
               onMinutes={(m) => onMinutes(t, m)}
+              onOpen={() => onOpen(t)}
               handle={responderFor(t.id).panHandlers}
             />
           </Animated.View>
@@ -614,11 +644,13 @@ function TodoRow({
   todo,
   today,
   onMinutes,
+  onOpen,
   handle,
 }: {
   todo: Todo
   today: string
   onMinutes: (minutes: number) => void
+  onOpen: () => void
   handle: PanResponderInstance['panHandlers']
 }) {
   const minutes = Math.round((todo.end - todo.start) * 60)
@@ -629,14 +661,14 @@ function TodoRow({
       <View {...handle} style={styles.handle} hitSlop={8} accessibilityLabel="Drag to reorder">
         <GripVertical size={18} color={c.muted} />
       </View>
-      <View style={{ flex: 1 }}>
+      <Pressable style={{ flex: 1 }} onPress={onOpen}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
           {todo.habit ? 'Habit · ' : ''}
           {todo.day === today ? '' : `${dayLabel(todo.day)} · `}
           {clock(todo.start)}
         </Text>
-      </View>
+      </Pressable>
       <View style={styles.durations}>
         {options.map((m) => {
           const selected = m === minutes
@@ -661,10 +693,12 @@ function DayGrid({
   items,
   showNow,
   onMore,
+  onOpen,
 }: {
   items: CalItem[]
   showNow: boolean
   onMore: (item: CalItem, x: number, y: number) => void
+  onOpen: (item: CalItem) => void
 }) {
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
@@ -697,8 +731,9 @@ function DayGrid({
         const compact = height < 34
         const dark = it.doneEarly
         return (
-          <View
+          <Pressable
             key={`${it.kind}-${it.id}`}
+            onPress={() => onOpen(it)}
             style={[
               styles.event,
               half
@@ -728,7 +763,7 @@ function DayGrid({
             >
               <MoreHorizontal size={compact ? 16 : 18} color={dark ? c.onDark : c.ink} />
             </Pressable>
-          </View>
+          </Pressable>
         )
       })}
       {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
@@ -806,6 +841,13 @@ const styles = StyleSheet.create({
   },
   menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
+  detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
+  detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
+  detailDay: { fontSize: 14, color: c.muted },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  detailLabel: { fontSize: 16, color: c.muted },
+  detailValue: { fontSize: 16, color: c.ink, fontWeight: '600' },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
