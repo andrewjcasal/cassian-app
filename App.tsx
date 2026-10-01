@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,7 +17,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
-import { ChevronLeft, ChevronRight, LogOut, MoreHorizontal, Plus } from 'lucide-react-native'
+import { ChevronLeft, ChevronRight, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
 import { supabase } from './src/supabase'
 
 type CalItem = { id: string; title: string; start: number; end: number; kind: 'block' | 'task'; done: boolean }
@@ -161,6 +162,7 @@ function DayPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
@@ -294,8 +296,8 @@ function DayPage() {
             <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
               <ChevronRight size={22} color={c.ink} />
             </Pressable>
-            <Pressable onPress={() => supabase.auth.signOut()} hitSlop={10} accessibilityLabel="Sign out">
-              <LogOut size={18} color={c.muted} />
+            <Pressable onPress={() => setPanelOpen(true)} hitSlop={10} accessibilityLabel="Menu">
+              <MenuIcon size={20} color={c.ink} />
             </Pressable>
           </View>
         </View>
@@ -367,7 +369,53 @@ function DayPage() {
           ) : null}
         </Pressable>
       </Modal>
+
+      <SidePanel open={panelOpen} onClose={() => setPanelOpen(false)} />
     </View>
+  )
+}
+
+const PANEL_WIDTH = 260
+
+function SidePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const slide = useRef(new Animated.Value(PANEL_WIDTH)).current
+  const [mounted, setMounted] = useState(open)
+
+  useEffect(() => {
+    if (open) setMounted(true)
+    Animated.timing(slide, { toValue: open ? 0 : PANEL_WIDTH, duration: 200, useNativeDriver: true }).start(() => {
+      if (!open) setMounted(false)
+    })
+  }, [open, slide])
+
+  const items = [
+    // Habits has no screen yet; it's listed so the panel has its shape
+    { key: 'habits', label: 'Habits', Icon: Repeat, onPress: onClose },
+    {
+      key: 'signout',
+      label: 'Sign out',
+      Icon: LogOut,
+      onPress: () => {
+        onClose()
+        supabase.auth.signOut()
+      },
+    },
+  ]
+
+  return (
+    <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={styles.panelBackdrop} onPress={onClose} />
+      <Animated.View style={[styles.panel, { transform: [{ translateX: slide }] }]}>
+        <SafeAreaView edges={['top', 'bottom']}>
+          {items.map(({ key, label, Icon, onPress }) => (
+            <Pressable key={key} style={styles.panelItem} onPress={onPress}>
+              <Icon size={18} color={c.ink} />
+              <Text style={styles.panelText}>{label}</Text>
+            </Pressable>
+          ))}
+        </SafeAreaView>
+      </Animated.View>
+    </Modal>
   )
 }
 
@@ -513,6 +561,22 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
+  panelBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.25)' },
+  panel: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: PANEL_WIDTH,
+    backgroundColor: c.card,
+    paddingHorizontal: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  panelItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 10 },
+  panelText: { fontSize: 16, color: c.ink },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
