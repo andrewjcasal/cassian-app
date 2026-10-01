@@ -621,6 +621,17 @@ function relayout(before: Todo[], after: Todo[]) {
 
 const ROW_FALLBACK_PX = 56
 
+// Lengths a todo can step through, in minutes
+const DURATION_STEPS = [5, 15, 30, 45, 60, 90, 120, 180, 240]
+
+// The current length with the next shorter step to its left and the next
+// longer step to its right (30 -> 15, 30, 45; 15 -> 5, 15, 30).
+function durationOptions(minutes: number) {
+  const shorter = [...DURATION_STEPS].reverse().find((m) => m < minutes)
+  const longer = DURATION_STEPS.find((m) => m > minutes)
+  return [shorter, minutes, longer].filter((m): m is number => m !== undefined)
+}
+
 function TodoList({
   todos,
   today,
@@ -751,14 +762,7 @@ function TodoRow({
   handle: PanResponderInstance['panHandlers']
 }) {
   const minutes = Math.round((todo.end - todo.start) * 60)
-  const [value, setValue] = useState(String(minutes))
-  useEffect(() => setValue(String(minutes)), [minutes])
-
-  const commit = () => {
-    const next = parseInt(value, 10)
-    if (!next || next <= 0) return setValue(String(minutes))
-    if (next !== minutes) onMinutes(next)
-  }
+  const options = durationOptions(minutes)
 
   return (
     <View style={styles.todoRow}>
@@ -772,17 +776,22 @@ function TodoRow({
           {clock(todo.start)}
         </Text>
       </View>
-      <TextInput
-        style={styles.minutesInput}
-        value={value}
-        onChangeText={setValue}
-        onBlur={commit}
-        onSubmitEditing={commit}
-        keyboardType="number-pad"
-        returnKeyType="done"
-        selectTextOnFocus
-      />
-      <Text style={styles.minutesLabel}>min</Text>
+      <View style={styles.durations}>
+        {options.map((m) => {
+          const selected = m === minutes
+          return (
+            <Pressable
+              key={m}
+              style={[styles.duration, selected && styles.durationSelected]}
+              onPress={() => !selected && onMinutes(m)}
+              accessibilityLabel={`${m} minutes`}
+              accessibilityState={{ selected }}
+            >
+              <Text style={[styles.durationText, selected && styles.durationTextSelected]}>{m}</Text>
+            </Pressable>
+          )
+        })}
+      </View>
     </View>
   )
 }
@@ -900,17 +909,19 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   todoMeta: { fontSize: 13, color: c.muted },
-  minutesInput: {
-    width: 56,
-    fontSize: 16,
-    color: c.ink,
-    textAlign: 'right',
+  durations: { flexDirection: 'row', gap: 4 },
+  duration: {
+    minWidth: 36,
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: c.line,
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
   },
+  durationSelected: { backgroundColor: c.accent, borderColor: c.accent },
+  durationText: { fontSize: 14, color: c.ink },
+  durationTextSelected: { color: '#ffffff', fontWeight: '600' },
   minutesLabel: { fontSize: 14, color: c.muted },
   addInput: { flex: 1, fontSize: 16, color: c.ink, paddingVertical: 10 },
   hourLine: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, borderTopColor: c.line },
