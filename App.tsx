@@ -276,7 +276,6 @@ function DayPage() {
   // The rules for each menu option live in src/schedule.ts
   const setStatus = async (item: CalItem, status: Status) => {
     const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
-    const isToday = day === today
     const now = nowHours()
 
     if (status === 'start_now') {
@@ -287,7 +286,7 @@ function DayPage() {
     }
     if (status === 'follow_up') return insertBlock(`Follow up: ${item.title}`, 0.5, 'a follow-up')
     if (status === 'done') {
-      const plan = donePlan(items, item, isToday, now)
+      const plan = donePlan(items, item, day, today, now)
       const update: Record<string, unknown> = { done: true }
       if (item.kind === 'block') update.done_at = new Date().toISOString()
       if (plan.endAt !== null) update.end_time = timeOf(plan.endAt)
@@ -295,14 +294,14 @@ function DayPage() {
       if (error) return setError(error.message)
       return saveMoves(plan.moves)
     }
-    const plan = notStartedPlan(items, item, isToday, now)
+    const plan = notStartedPlan(items, item, day, today, now)
     if ('error' in plan) return setError(plan.error)
-    const { error } = await supabase
-      .from(table)
-      .update({ done: false, start_time: timeOf(plan.start), end_time: timeOf(plan.end) })
-      .eq('id', item.id)
-    if (error) return setError(error.message)
-    load()
+    if (item.done) {
+      const reset = item.kind === 'block' ? { done: false, done_at: null } : { done: false }
+      const { error } = await supabase.from(table).update(reset).eq('id', item.id)
+      if (error) return setError(error.message)
+    }
+    saveMoves(plan.moves)
   }
 
   const setMinutes = async (todo: Todo, minutes: number) => {

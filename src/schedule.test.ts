@@ -110,7 +110,7 @@ test('Start now refuses to run past midnight', () => {
 test('Done on a block under way ends it now and moves later blocks up', () => {
   const followup = block('followup', at(19, 15), at(19, 45))
   const items = [followup, block('washer', at(19, 45), at(20, 45)), block('skool', at(20, 45), 21, { source: 'habit' })]
-  const plan = donePlan(items, followup, true, at(19, 27))
+  const plan = donePlan(items, followup, DAY, DAY, at(19, 27))
   assert.equal(plan.endAt, at(19, 27))
   assert.deepEqual(fmt(plan.moves), ['washer@19:27-20:27', 'skool@20:27-20:42'])
 })
@@ -119,19 +119,39 @@ test('Done at 3pm on a todo running until 4pm pulls the 4pm todos and habits bac
   const later = [block('washer', 16, 17), block('skool', 17, at(17, 15), { source: 'habit', habitId: 'h1' })]
   for (const start of [14, 15]) {
     const current = block('current', start, 16)
-    const plan = donePlan([current, ...later], current, true, 15)
+    const plan = donePlan([current, ...later], current, DAY, DAY, 15)
     assert.equal(plan.endAt, 15, `started at ${start}`)
     assert.deepEqual(fmt(plan.moves), ['washer@15:00-16:00', 'skool@16:00-16:15'], `started at ${start}`)
   }
 })
 
-test('Done on a block that has not started, or is over, leaves the schedule alone', () => {
-  const later = block('washer', at(19, 45), at(20, 45))
-  assert.deepEqual(donePlan([later], later, true, at(19, 27)), { endAt: null, moves: [] })
+test('Done on a block that is over leaves the schedule alone', () => {
   const over = block('oven', 15, 16)
-  assert.deepEqual(donePlan([over], over, true, at(19, 27)), { endAt: null, moves: [] })
-  const underWayOtherDay = block('x', 19, 20)
-  assert.deepEqual(donePlan([underWayOtherDay], underWayOtherDay, false, at(19, 27)), { endAt: null, moves: [] })
+  const after = block('washer', 16, 17)
+  assert.deepEqual(donePlan([over, after], over, DAY, DAY, at(19, 27)), { endAt: null, moves: [] })
+  const earlierDay = block('x', 19, 20)
+  assert.deepEqual(donePlan([earlierDay, block('y', 20, 21)], earlierDay, '2026-09-30', DAY, at(19, 27)), {
+    endAt: null,
+    moves: [],
+  })
+})
+
+test('Done before a block starts frees its slot, so later todos and habits move up alongside it', () => {
+  const washer = block('washer', at(19, 45), at(20, 45))
+  const items = [washer, block('skool', at(20, 45), 21, { source: 'habit', habitId: 'h1' }), block('old', 21, 22, { source: 'manual' })]
+  const plan = donePlan(items, washer, DAY, DAY, at(19, 27))
+  assert.equal(plan.endAt, null)
+  assert.deepEqual(fmt(plan.moves), ['skool@19:45-20:00'])
+  // A later day counts as not started yet too
+  const tomorrow = donePlan(items, washer, '2026-10-02', DAY, at(19, 27))
+  assert.deepEqual(fmt(tomorrow.moves), ['skool@19:45-20:00'])
+})
+
+test('A block done early does not count as taken when finding a gap', () => {
+  const items = [block('gray', 16, 17, { done: true, doneEarly: true }), block('b', 17, 18)]
+  assert.equal(freeSlot(items, 16, 1), 16)
+  assert.equal(freeSlot(items, 16, 1.5), 18)
+  assert.equal(freeSlot([block('gray', 16, 17, { done: true, doneEarly: true })], 16, 1), 16)
 })
 
 test('isDoneEarly is true only when done before the block starts', () => {
@@ -143,17 +163,46 @@ test('isDoneEarly is true only when done before the block starts', () => {
   assert.equal(dateAt(DAY, at(19, 45)).getHours(), 19)
 })
 
-test('Not started moves a todo after the last block, never before the next quarter hour', () => {
-  const carve = block('carve', 16, 17)
-  const items = [block('oven', 15, 16), carve, block('washer', 17, 18)]
-  assert.deepEqual(notStartedPlan(items, carve, true, at(14, 46)), { start: 18, end: 19 })
-  assert.deepEqual(notStartedPlan(items, carve, true, at(18, 10)), { start: at(18, 15), end: at(19, 15) })
+test('Not started starts the block now and pushes the rest of the chain out after it', () => {
+  const carve = block('carve', 15, 16)
+  const items = [
+    block('oven', 14, 15, { done: true }),
+    carve,
+    block('washer', 18, 19),
+    block('skool', 19, at(19, 15), { source: 'habit', habitId: 'h1' }),
+    block('oldmanual', 20, 21, { source: 'manual' }),
+  ]
+  // 5:40pm, nothing under way: carve starts now, washer and skool follow it
+  const plan = notStartedPlan(items, carve, DAY, DAY, at(17, 40))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['carve@17:40-18:40', 'washer@18:40-19:40', 'skool@19:40-19:55'])
 })
 
-test('Not started moves a habit into the next gap after it', () => {
-  const skool = block('skool', at(20, 30), at(20, 45), { source: 'habit', habitId: 'h1' })
-  const items = [skool, block('a', at(20, 45), 21), block('b', at(21, 30), 22)]
-  assert.deepEqual(notStartedPlan(items, skool, true, at(20, 0)), { start: 21, end: at(21, 15) })
+test('Not started also pushes a block that is under way', () => {
+  const carve = block('carve', 15, 16)
+  const items = [carve, block('washer', 18, 19), block('skool', 19, at(19, 15), { source: 'habit', habitId: 'h1' })]
+  const plan = notStartedPlan(items, carve, DAY, DAY, at(18, 12))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['carve@18:12-19:12', 'washer@19:12-20:12', 'skool@20:12-20:27'])
+})
+
+test('Not started works the same for a habit', () => {
+  const skool = block('skool', 15, at(15, 15), { source: 'habit', habitId: 'h1' })
+  const plan = notStartedPlan([skool, block('washer', 18, 19)], skool, DAY, DAY, at(17, 50))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['skool@17:50-18:05', 'washer@18:05-19:05'])
+})
+
+test('Not started on an earlier day moves the block after that day last block', () => {
+  const carve = block('carve', 16, 17)
+  const plan = notStartedPlan([carve, block('washer', 17, 18)], carve, '2026-09-30', DAY, at(17, 50))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['carve@18:00-19:00'])
+})
+
+test('Not started refuses to run past midnight', () => {
+  const carve = block('carve', 15, 16)
+  assert.ok('error' in notStartedPlan([carve, block('late', 23, at(23, 50))], carve, DAY, DAY, at(23, 0)))
 })
 
 test('resizePlan changes the length and shifts the same day later todos', () => {

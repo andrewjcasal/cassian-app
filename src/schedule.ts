@@ -109,10 +109,11 @@ const shift = (it: { id: string; kind: 'block' | 'task'; start: number; end: num
 })
 
 // The first gap at or after `from` that fits `length` hours between the day's
-// blocks, or null if nothing fits before midnight.
+// blocks, or null if nothing fits before midnight. A block done early has given
+// its slot back, so it doesn't count as taken.
 export function freeSlot(items: CalItem[], from: number, length: number) {
   let cursor = from
-  for (const it of [...items].sort((a, b) => a.start - b.start)) {
+  for (const it of [...items].filter((x) => !x.doneEarly).sort((a, b) => a.start - b.start)) {
     if (it.end <= cursor) continue
     if (it.start - cursor >= length - EPS) return cursor
     cursor = Math.max(cursor, it.end)
@@ -159,36 +160,65 @@ export function startNowPlan(items: CalItem[], item: CalItem, now: number): { mo
   return { moves: [item, ...later].map((it) => shift(it, delta)) }
 }
 
-// Done on a block under way ends it this minute and carries later blocks up by the
-// freed time. Done on any other block leaves the schedule alone.
-export function donePlan(items: CalItem[], item: CalItem, isToday: boolean, now: number) {
+// Done frees whatever is left of a block's slot, and the todos and habits after
+// it move up by that much so the chain stays back to back:
+// - under way (from its start minute): it ends this minute
+// - not started yet (later today, or a later day): it keeps its times, renders as
+//   done early beside the todos that move up into its slot
+// - already over: nothing moves
+export function donePlan(items: CalItem[], item: CalItem, day: string, today: string, now: number) {
   const at = minuteOf(now)
-  // Under way from its start minute, so Done right at the start still frees the slot
+  const isToday = day === today
   const underWay = isToday && item.start <= at && at < item.end
-  if (!underWay) return { endAt: null as number | null, moves: [] as Move[] }
-  const delta = at - item.end
-  return { endAt: at as number | null, moves: carried(items, item, item.end).map((it) => shift(it, delta)) }
+  const notStarted = day > today || (isToday && at < item.start)
+  if (underWay) {
+    const delta = at - item.end
+    return { endAt: at as number | null, moves: carried(items, item, item.end).map((it) => shift(it, delta)) }
+  }
+  if (notStarted) {
+    const delta = item.start - item.end
+    return { endAt: null as number | null, moves: carried(items, item, item.end).map((it) => shift(it, delta)) }
+  }
+  return { endAt: null as number | null, moves: [] as Move[] }
 }
 
-// Not started moves the block, same length. A habit goes into the next gap that
-// fits after it; anything else goes after the day's last other block. Today,
-// never earlier than the next quarter hour.
+// Not started, today: the block starts now, and every todo and habit that isn't
+// done and hasn't finished (including one under way) re-packs back to back after
+// it in its current order, each keeping its length. On an earlier day there's no
+// "now", so the block moves to after that day's last other block.
 export function notStartedPlan(
   items: CalItem[],
   item: CalItem,
-  isToday: boolean,
+  day: string,
+  today: string,
   now: number,
-): { start: number; end: number } | { error: string } {
+): { moves: Move[] } | { error: string } {
   const length = item.end - item.start
-  const others = items.filter((it) => it.id !== item.id)
-  if (item.habitId) {
-    const start = freeSlot(others, isToday ? Math.max(item.end, nextQuarter(now)) : item.end, length)
-    return start === null ? { error: 'No gap left today for that habit' } : { start, end: start + length }
+  if (day !== today) {
+    const start = Math.max(item.start, ...items.filter((it) => it.id !== item.id).map((it) => it.end))
+    if (start + length > 24 + EPS) return { error: 'No room left that day to move that block' }
+    return { moves: [{ id: item.id, kind: item.kind, start, end: start + length }] }
   }
-  const lastEnd = Math.max(item.start, ...others.map((it) => it.end))
-  const start = isToday ? Math.max(lastEnd, nextQuarter(now)) : lastEnd
-  if (start + length > 24 + EPS) return { error: 'No room left today to move that block' }
-  return { start, end: start + length }
+  const at = minuteOf(now)
+  const rest = items
+    .filter(
+      (it) =>
+        it.id !== item.id &&
+        it.kind === 'block' &&
+        !it.done &&
+        (it.source === 'app' || it.source === 'habit') &&
+        it.end > at + EPS,
+    )
+    .sort((a, b) => a.start - b.start)
+  const moves: Move[] = []
+  let cursor = at
+  for (const it of [item, ...rest]) {
+    const len = it.end - it.start
+    moves.push({ id: it.id, kind: it.kind, start: cursor, end: cursor + len })
+    cursor += len
+  }
+  if (cursor > 24 + EPS) return { error: 'That runs past midnight' }
+  return { moves }
 }
 
 // A new length moves this todo's end, and the same day's later todos shift by the
