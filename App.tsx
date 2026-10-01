@@ -14,10 +14,11 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
-import { ChevronLeft, ChevronRight, LogOut, Plus } from 'lucide-react-native'
+import { ChevronLeft, ChevronRight, LogOut, MoreHorizontal, Plus } from 'lucide-react-native'
 import { supabase } from './src/supabase'
 
 type CalItem = { id: string; title: string; start: number; end: number; kind: 'block' | 'task'; done: boolean }
+type Status = 'done' | 'not_started'
 
 const HOUR_PX = 48
 const FIRST_HOUR = 6
@@ -155,14 +156,14 @@ function DayPage() {
     setLoading(true)
     setError(null)
     const [blockRes, taskRes] = await Promise.all([
-      supabase.from('cass_time_blocks').select('id,title,start_time,end_time').eq('day', day).order('start_time'),
+      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done').eq('day', day).order('start_time'),
       supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
     ])
     const err = blockRes.error ?? taskRes.error
     if (err) setError(err.message)
     const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
       const start = hoursOf(b.start_time)
-      return { id: b.id, title: b.title, start, end: b.end_time ? hoursOf(b.end_time) : start + 0.5, kind: 'block', done: false }
+      return { id: b.id, title: b.title, start, end: b.end_time ? hoursOf(b.end_time) : start + 0.5, kind: 'block', done: b.done }
     })
     const tasks: CalItem[] = (taskRes.data ?? []).map((t) => {
       const start = hoursOf(t.start_time!)
@@ -185,6 +186,29 @@ function DayPage() {
     const { error } = await supabase
       .from('cass_time_blocks')
       .insert({ day, title, start_time: timeOf(start), end_time: timeOf(start + 1), kind: 'personal', source: 'app' })
+    if (error) return setError(error.message)
+    load()
+  }
+
+  // Done crosses the block out. Not started moves it, same length, to start when the
+  // day's last other block ends (or at the next quarter hour, if that's already past).
+  const setStatus = async (item: CalItem, status: Status) => {
+    const table = item.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks'
+    if (status === 'done') {
+      const { error } = await supabase.from(table).update({ done: true }).eq('id', item.id)
+      if (error) return setError(error.message)
+      return load()
+    }
+    const length = item.end - item.start
+    const now = new Date()
+    const nextQuarter = Math.ceil((now.getHours() + now.getMinutes() / 60) * 4) / 4
+    const lastEnd = Math.max(item.start, ...items.filter((it) => it.id !== item.id).map((it) => it.end))
+    const start = day === today ? Math.max(lastEnd, nextQuarter) : lastEnd
+    if (start + length > 24) return setError('No room left today to move that block')
+    const { error } = await supabase
+      .from(table)
+      .update({ done: false, start_time: timeOf(start), end_time: timeOf(start + length) })
+      .eq('id', item.id)
     if (error) return setError(error.message)
     load()
   }
@@ -225,7 +249,7 @@ function DayPage() {
         </Pressable>
       </View>
 
-      <DayGrid items={items} showNow={day === today} />
+      <DayGrid items={items} showNow={day === today} onStatus={setStatus} />
 
       <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
         <LogOut size={14} color={c.muted} />
@@ -235,7 +259,16 @@ function DayPage() {
   )
 }
 
-function DayGrid({ items, showNow }: { items: CalItem[]; showNow: boolean }) {
+function DayGrid({
+  items,
+  showNow,
+  onStatus,
+}: {
+  items: CalItem[]
+  showNow: boolean
+  onStatus: (item: CalItem, status: Status) => void
+}) {
+  const [menuFor, setMenuFor] = useState<string | null>(null)
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
   const first = showNow ? Math.max(0, Math.floor(nowHours) - LOOKBACK_HOURS) : FIRST_HOUR
@@ -268,8 +301,38 @@ function DayGrid({ items, showNow }: { items: CalItem[]; showNow: boolean }) {
           <Text style={styles.eventTime}>
             {clock(it.start)}–{clock(it.end)}
           </Text>
+          <Pressable
+            style={styles.more}
+            hitSlop={10}
+            onPress={() => setMenuFor(menuFor === it.id ? null : it.id)}
+          >
+            <MoreHorizontal size={18} color={c.ink} />
+          </Pressable>
         </View>
       ))}
+      {visible
+        .filter((it) => it.id === menuFor)
+        .map((it) => (
+          <View key="menu" style={[styles.menu, { top: top(it.start) + 28 }]}>
+            {(
+              [
+                ['done', 'Done'],
+                ['not_started', 'Not started'],
+              ] as const
+            ).map(([status, label]) => (
+              <Pressable
+                key={status}
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuFor(null)
+                  onStatus(it, status)
+                }}
+              >
+                <Text style={styles.menuText}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ))}
       {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
@@ -289,8 +352,25 @@ const styles = StyleSheet.create({
   hourLine: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, borderTopColor: c.line },
   hourLabel: { fontSize: 11, color: c.muted, marginLeft: 6, marginTop: 2 },
   event: { position: 'absolute', left: 52, right: 6, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
-  eventText: { fontSize: 14, fontWeight: '600', color: c.ink },
+  eventText: { fontSize: 14, fontWeight: '600', color: c.ink, marginRight: 24 },
   eventTime: { fontSize: 12, color: c.muted },
+  more: { position: 'absolute', right: 6, top: 4 },
+  menu: {
+    position: 'absolute',
+    right: 10,
+    zIndex: 10,
+    backgroundColor: c.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: c.line,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
+  menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
   button: { backgroundColor: c.accent, borderRadius: 8, padding: 12, alignItems: 'center' },
