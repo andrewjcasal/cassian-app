@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
+  type PanResponderInstance,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,7 +19,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
-import { ChevronLeft, ChevronRight, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
+import { ChevronLeft, ChevronRight, GripVertical, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
 import { supabase } from './src/supabase'
 
 type CalItem = {
@@ -198,6 +201,7 @@ function DayPage() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
+  const [dragging, setDragging] = useState(false)
   const [navMenu, setNavMenu] = useState<{ x: number; y: number } | null>(null)
   const [view, setView] = useState<'day' | 'habits'>('day')
   const [loading, setLoading] = useState(false)
@@ -399,9 +403,27 @@ function DayPage() {
 
   if (view === 'habits') return <HabitsScreen onBack={() => setView('day')} />
 
+  // Dragging a todo to a new spot re-packs the swapped range back to back from
+  // where its first todo started, each keeping its own length.
+  const reorder = async (next: Todo[]) => {
+    const updates = relayout(todos, next)
+    if (!updates.length) return
+    const moved = new Map(updates.map((u) => [u.id, u]))
+    setTodos(next.map((t) => ({ ...t, ...(moved.get(t.id) ?? {}) })))
+    const results = await Promise.all(
+      updates.map((u) =>
+        supabase.from('cass_time_blocks').update({ start_time: timeOf(u.start), end_time: timeOf(u.end) }).eq('id', u.id),
+      ),
+    )
+    const failed = results.find((r) => r.error)
+    if (failed?.error) setError(failed.error.message)
+    load()
+  }
+
   return (
     <View style={styles.screen}>
       <ScrollView
+        scrollEnabled={!dragging}
         contentContainerStyle={styles.page}
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
@@ -445,9 +467,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            {todos.map((t) => (
-              <TodoRow key={t.id} todo={t} today={today} onMinutes={(m) => setMinutes(t, m)} />
-            ))}
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -577,7 +597,159 @@ function menuOptions(item: CalItem, day: string, today: string) {
   return options
 }
 
-function TodoRow({ todo, today, onMinutes }: { todo: Todo; today: string; onMinutes: (minutes: number) => void }) {
+// The todos whose order changed, per day, laid back to back from where the first
+// of them started. Todos outside the changed range keep their times.
+function relayout(before: Todo[], after: Todo[]) {
+  const updates: { id: string; start: number; end: number }[] = []
+  for (const day of new Set(before.map((t) => t.day))) {
+    const old = before.filter((t) => t.day === day)
+    const next = after.filter((t) => t.day === day)
+    let i = 0
+    while (i < old.length && old[i].id === next[i].id) i++
+    if (i === old.length) continue
+    let j = old.length - 1
+    while (j > i && old[j].id === next[j].id) j--
+    let cursor = old[i].start
+    for (const t of next.slice(i, j + 1)) {
+      const length = t.end - t.start
+      if (Math.abs(t.start - cursor) > 1e-6) updates.push({ id: t.id, start: cursor, end: cursor + length })
+      cursor += length
+    }
+  }
+  return updates
+}
+
+const ROW_FALLBACK_PX = 56
+
+function TodoList({
+  todos,
+  today,
+  onMinutes,
+  onReorder,
+  onDragging,
+}: {
+  todos: Todo[]
+  today: string
+  onMinutes: (todo: Todo, minutes: number) => void
+  onReorder: (next: Todo[]) => void
+  onDragging: (dragging: boolean) => void
+}) {
+  const [drag, setDrag] = useState<{ id: string; from: number; to: number } | null>(null)
+  const dy = useRef(new Animated.Value(0)).current
+  const heights = useRef(new Map<string, number>()).current
+  const responders = useRef(new Map<string, PanResponderInstance>()).current
+  // Responders live across renders, so they read the latest values through refs
+  const latest = useRef({ todos, drag, onReorder, onDragging })
+  latest.current = { todos, drag, onReorder, onDragging }
+
+  const targetIndex = (from: number, offset: number) => {
+    const list = latest.current.todos
+    let to = from
+    let remaining = offset
+    while (remaining > 0 && to < list.length - 1) {
+      const h = heights.get(list[to + 1].id) ?? ROW_FALLBACK_PX
+      if (remaining < h / 2) break
+      remaining -= h
+      to++
+    }
+    while (remaining < 0 && to > 0) {
+      const h = heights.get(list[to - 1].id) ?? ROW_FALLBACK_PX
+      if (-remaining < h / 2) break
+      remaining += h
+      to--
+    }
+    return to
+  }
+
+  const finish = () => {
+    const { drag: d, todos: list, onReorder: reorder, onDragging: setDragging } = latest.current
+    setDrag(null)
+    dy.setValue(0)
+    setDragging(false)
+    if (!d || d.to === d.from) return
+    const next = [...list]
+    const [moved] = next.splice(d.from, 1)
+    next.splice(d.to, 0, moved)
+    reorder(next)
+  }
+
+  const responderFor = (id: string) => {
+    let r = responders.get(id)
+    if (!r) {
+      r = PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: () => {
+          const from = latest.current.todos.findIndex((t) => t.id === id)
+          dy.setValue(0)
+          latest.current.onDragging(true)
+          const d = { id, from, to: from }
+          latest.current.drag = d
+          setDrag(d)
+        },
+        onPanResponderMove: (_e, g) => {
+          dy.setValue(g.dy)
+          const d = latest.current.drag
+          if (!d) return
+          const to = targetIndex(d.from, g.dy)
+          if (to !== d.to) {
+            const nd = { ...d, to }
+            latest.current.drag = nd
+            setDrag(nd)
+          }
+        },
+        onPanResponderRelease: finish,
+        onPanResponderTerminate: finish,
+      })
+      responders.set(id, r)
+    }
+    return r
+  }
+
+  const draggedHeight = drag ? heights.get(drag.id) ?? ROW_FALLBACK_PX : 0
+
+  return (
+    <>
+      {todos.map((t, k) => {
+        const isDragged = drag?.id === t.id
+        let shift = 0
+        if (drag && !isDragged) {
+          if (drag.from < drag.to && k > drag.from && k <= drag.to) shift = -draggedHeight
+          if (drag.to < drag.from && k >= drag.to && k < drag.from) shift = draggedHeight
+        }
+        return (
+          <Animated.View
+            key={t.id}
+            onLayout={(e) => heights.set(t.id, e.nativeEvent.layout.height)}
+            style={[
+              isDragged ? [styles.dragging, { transform: [{ translateY: dy }] }] : { transform: [{ translateY: shift }] },
+            ]}
+          >
+            <TodoRow
+              todo={t}
+              today={today}
+              onMinutes={(m) => onMinutes(t, m)}
+              handle={responderFor(t.id).panHandlers}
+            />
+          </Animated.View>
+        )
+      })}
+    </>
+  )
+}
+
+function TodoRow({
+  todo,
+  today,
+  onMinutes,
+  handle,
+}: {
+  todo: Todo
+  today: string
+  onMinutes: (minutes: number) => void
+  handle: PanResponderInstance['panHandlers']
+}) {
   const minutes = Math.round((todo.end - todo.start) * 60)
   const [value, setValue] = useState(String(minutes))
   useEffect(() => setValue(String(minutes)), [minutes])
@@ -590,6 +762,9 @@ function TodoRow({ todo, today, onMinutes }: { todo: Todo; today: string; onMinu
 
   return (
     <View style={styles.todoRow}>
+      <View {...handle} style={styles.handle} hitSlop={8} accessibilityLabel="Drag to reorder">
+        <GripVertical size={18} color={c.muted} />
+      </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
@@ -713,6 +888,17 @@ const styles = StyleSheet.create({
   tabTextActive: { color: c.ink, fontWeight: '600' },
   todoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 8 },
   todoText: { fontSize: 16, color: c.ink },
+  handle: { paddingVertical: 6, paddingRight: 2 },
+  dragging: {
+    zIndex: 2,
+    backgroundColor: c.card,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
+  },
   todoMeta: { fontSize: 13, color: c.muted },
   minutesInput: {
     width: 56,
