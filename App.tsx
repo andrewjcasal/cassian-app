@@ -703,31 +703,35 @@ function HabitsScreen({
   ]
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
-      <ScreenHeader title="Habits" onSettings={onSettings} />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {sections.map(({ title, list }) => (
-        <View key={title}>
-          <Text style={styles.sectionLabel}>{title}</Text>
-          <View style={styles.card}>
-            {list.length ? (
-              list.map((h) => (
-                <Pressable key={h.id} style={styles.todoRow} onPress={() => setSelected(h)}>
-                  <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
-                  {h.frequency === 'weekly' ? (
-                    <Text style={styles.minutesLabel}>{h.weekday === null ? 'Pick a day' : WEEKDAY_NAMES[h.weekday]}</Text>
-                  ) : null}
-                  <Text style={styles.minutesLabel}>{h.minutes} min</Text>
-                  <ChevronRight size={18} color={c.muted} />
-                </Pressable>
-              ))
-            ) : (
-              <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text>
-            )}
+    <>
+      <ScrollView contentContainerStyle={styles.page}>
+        <ScreenHeader title="Habits" onSettings={onSettings} />
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {sections.map(({ title, list }) => (
+          <View key={title}>
+            <Text style={styles.sectionLabel}>{title}</Text>
+            <View style={styles.card}>
+              {list.length ? (
+                list.map((h) => (
+                  <Pressable key={h.id} style={styles.todoRow} onPress={() => setSelected(h)}>
+                    <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
+                    {h.frequency === 'weekly' ? (
+                      <Text style={styles.minutesLabel}>{h.weekday === null ? 'Pick a day' : WEEKDAY_NAMES[h.weekday]}</Text>
+                    ) : null}
+                    <Text style={styles.minutesLabel}>{h.minutes} min</Text>
+                    <ChevronRight size={18} color={c.muted} />
+                  </Pressable>
+                ))
+              ) : (
+                <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text>
+              )}
+            </View>
           </View>
-        </View>
-      ))}
+        ))}
 
+      </ScrollView>
+
+      {/* Outside the ScrollView, so one tap on the backdrop closes it */}
       <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setSelected(null)}>
           {selected ? (
@@ -740,7 +744,7 @@ function HabitsScreen({
           ) : null}
         </Pressable>
       </Modal>
-    </ScrollView>
+    </>
   )
 }
 
