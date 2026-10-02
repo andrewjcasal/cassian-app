@@ -651,8 +651,6 @@ function HabitsScreen({
       })
   }, [])
 
-  if (selected) return <HabitHistory habit={selected} today={today} onBack={() => setSelected(null)} />
-
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <ScreenHeader title="Habits" onSettings={onSettings} />
@@ -666,12 +664,18 @@ function HabitsScreen({
           </Pressable>
         ))}
       </View>
+
+      <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setSelected(null)}>
+          {selected ? <HabitHistory habit={selected} today={today} /> : null}
+        </Pressable>
+      </Modal>
     </ScrollView>
   )
 }
 
 // Each day's done or not done for one habit (habitHistory in src/schedule.ts)
-function HabitHistory({ habit, today, onBack }: { habit: Habit; today: string; onBack: () => void }) {
+function HabitHistory({ habit, today }: { habit: Habit; today: string }) {
   const [rows, setRows] = useState<ReturnType<typeof habitHistory> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -690,21 +694,16 @@ function HabitHistory({ habit, today, onBack }: { habit: Habit; today: string; o
   const doneCount = past.filter((r) => r.status === 'done').length
 
   return (
-    <ScrollView contentContainerStyle={styles.page}>
-      <View style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={10} accessibilityLabel="Back to habits">
-          <ChevronLeft size={22} color={c.ink} />
-        </Pressable>
-        <Text style={styles.title}>{habit.title}</Text>
-        <View style={{ width: 22 }} />
-      </View>
+    // Swallows taps so only the backdrop closes the card
+    <Pressable style={[styles.detailCard, styles.historyCard]} onPress={() => {}}>
+      <Text style={styles.detailTitle}>{habit.title}</Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {rows && rows.length ? (
         <>
           <Text style={styles.historySummary}>
             Done {doneCount} of {past.length} {past.length === 1 ? 'day' : 'days'}
           </Text>
-          <View style={styles.card}>
+          <ScrollView style={styles.historyList}>
             {rows.map((r) => (
               <View key={r.day} style={styles.todoRow}>
                 {r.status === 'done' ? (
@@ -720,12 +719,12 @@ function HabitHistory({ habit, today, onBack }: { habit: Habit; today: string; o
                 </Text>
               </View>
             ))}
-          </View>
+          </ScrollView>
         </>
       ) : rows ? (
         <Text style={styles.historySummary}>No days yet</Text>
       ) : null}
-    </ScrollView>
+    </Pressable>
   )
 }
 
@@ -1153,7 +1152,9 @@ const styles = StyleSheet.create({
   },
   menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  historySummary: { fontSize: 16, color: c.ink, marginBottom: 8 },
+  historySummary: { fontSize: 16, color: c.ink },
+  historyCard: { maxHeight: '80%' },
+  historyList: { flexGrow: 0 },
   detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
