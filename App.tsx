@@ -623,11 +623,28 @@ function SettingsButton({ onOpen }: { onOpen: (at: { x: number; y: number }) => 
 }
 
 // Title on the left, settings on the right, for the tabs without day navigation
-function ScreenHeader({ title, onSettings }: { title: string; onSettings: (at: { x: number; y: number }) => void }) {
+function ScreenHeader({
+  title,
+  onSettings,
+  onAdd,
+}: {
+  title: string
+  onSettings: (at: { x: number; y: number }) => void
+  // Shows "+ Add" left of the gear
+  onAdd?: () => void
+}) {
   return (
     <View style={styles.header}>
       <Text style={styles.title}>{title}</Text>
-      <SettingsButton onOpen={onSettings} />
+      <View style={styles.headerRight}>
+        {onAdd ? (
+          <Pressable style={styles.addButton} onPress={onAdd} hitSlop={8}>
+            <Plus size={16} color={c.accent} />
+            <Text style={styles.addButtonText}>Add</Text>
+          </Pressable>
+        ) : null}
+        <SettingsButton onOpen={onSettings} />
+      </View>
     </View>
   )
 }
@@ -654,6 +671,7 @@ function HabitsScreen({
   const [habits, setHabits] = useState<Habit[]>([])
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Habit | null>(null)
+  const [adding, setAdding] = useState(false)
   // Every habit's blocks, loaded with the list so a habit's history is ready the
   // moment its card opens
   const [blocksByHabit, setBlocksByHabit] = useState<Map<string, HabitBlock[]>>(new Map())
@@ -678,6 +696,17 @@ function HabitsScreen({
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active])
+
+  const addHabit = async (draft: Omit<Habit, 'id'>) => {
+    setAdding(false)
+    const { data, error } = await supabase
+      .from('cass_habits')
+      .insert({ ...draft, sort_order: habits.length + 1 })
+      .select('id,title,minutes,frequency,weekday')
+      .single()
+    if (error) return setError(error.message)
+    setHabits((list) => [...list, data])
+  }
 
   // Saves daily/weekly and the weekday. Unfinished blocks after today are cleared
   // so they get placed again on the right days as those days are opened.
@@ -714,7 +743,7 @@ function HabitsScreen({
   return (
     <>
       <ScrollView contentContainerStyle={styles.page}>
-        <ScreenHeader title="Habits" onSettings={onSettings} />
+        <ScreenHeader title="Habits" onSettings={onSettings} onAdd={() => setAdding(true)} />
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {sections.map(({ title, list }) => (
           <View key={title}>
@@ -741,6 +770,12 @@ function HabitsScreen({
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
+      <Modal visible={adding} transparent animationType="none" onRequestClose={() => setAdding(false)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setAdding(false)}>
+          {adding ? <AddHabitCard onSave={addHabit} /> : null}
+        </Pressable>
+      </Modal>
+
       <Modal visible={selected !== null} transparent animationType="none" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setSelected(null)}>
           {selected ? (
@@ -754,6 +789,98 @@ function HabitsScreen({
         </Pressable>
       </Modal>
     </>
+  )
+}
+
+// A new habit: name, how long it takes, and daily or weekly (with its day)
+function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }) {
+  const [title, setTitle] = useState('')
+  const [minutes, setMinutes] = useState(15)
+  const [frequency, setFrequency] = useState<Habit['frequency']>('daily')
+  const [weekday, setWeekday] = useState<number | null>(null)
+  const ready = title.trim().length > 0 && (frequency === 'daily' || weekday !== null)
+
+  return (
+    // Claims taps on the card so only the backdrop closes it
+    <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+      <Text style={styles.detailTitle}>New habit</Text>
+      <TextInput
+        style={styles.input}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Name"
+        placeholderTextColor={c.muted}
+        autoFocus
+      />
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Length</Text>
+        <View style={styles.durations}>
+          {durationOptions(minutes).map((m) => {
+            const active = m === minutes
+            return (
+              <Pressable
+                key={m}
+                style={[styles.duration, active && styles.durationSelected]}
+                onPress={() => setMinutes(m)}
+                accessibilityLabel={`${m} minutes`}
+                accessibilityState={{ selected: active }}
+              >
+                <Text style={[styles.durationText, active && styles.durationTextSelected]}>{m}</Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      </View>
+      <View style={styles.segment}>
+        {(['daily', 'weekly'] as const).map((f) => {
+          const active = frequency === f
+          return (
+            <Pressable
+              key={f}
+              style={[styles.segmentItem, active && styles.segmentItemActive]}
+              onPress={() => setFrequency(f)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                {f === 'daily' ? 'Daily' : 'Weekly'}
+              </Text>
+            </Pressable>
+          )
+        })}
+      </View>
+      {frequency === 'weekly' ? (
+        <>
+          <Text style={styles.historySummary}>Which day?</Text>
+          <View style={styles.weekdays}>
+            {WEEKDAYS.map((label, i) => {
+              const active = weekday === i
+              return (
+                <Pressable
+                  key={label}
+                  style={[styles.weekday, active && styles.segmentItemActive]}
+                  onPress={() => setWeekday(i)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={WEEKDAY_NAMES[i]}
+                >
+                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{label}</Text>
+                </Pressable>
+              )
+            })}
+          </View>
+        </>
+      ) : null}
+      <Pressable
+        style={[styles.doneButton, !ready && styles.buttonDisabled]}
+        disabled={!ready}
+        onPress={() =>
+          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null })
+        }
+      >
+        <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add habit</Text>
+      </Pressable>
+    </View>
   )
 }
 
@@ -1301,6 +1428,12 @@ const styles = StyleSheet.create({
   doneRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
   doneButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, backgroundColor: c.accent },
   doneButtonText: { fontSize: 16, fontWeight: '600', color: '#ffffff' },
+  // Disabled: muted gray text on the hairline gray, 5.35:1 (fading the green button
+  // to 40% instead left white text at 1.94:1)
+  buttonDisabled: { backgroundColor: c.line },
+  buttonDisabledText: { color: c.muted },
+  addButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  addButtonText: { fontSize: 16, fontWeight: '600', color: c.accent },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
