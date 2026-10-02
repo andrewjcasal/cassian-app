@@ -183,17 +183,31 @@ export function habitSearchFrom(day: string, today: string, now: number) {
 }
 
 // A habit's history, one row per day from its first block through today, newest
-// first. A day the app never placed it counts as not done; today is pending until
-// it's done; upcoming days are left off.
-export function habitHistory(rows: { logical_day: string; done: boolean }[], today: string) {
-  const doneByDay = new Map<string, boolean>()
-  for (const r of rows) if (r.logical_day <= today) doneByDay.set(r.logical_day, (doneByDay.get(r.logical_day) ?? false) || r.done)
-  const days = [...doneByDay.keys()].sort()
+// first. A done day carries when it started and how long it took. A day the app
+// never placed it counts as not done; today is pending until it's done; upcoming
+// days are left off.
+export type HabitDay =
+  | { day: string; status: 'done'; start: number; minutes: number }
+  | { day: string; status: 'missed' | 'pending' }
+
+export function habitHistory(
+  rows: { logical_day: string; done: boolean; start: number; end: number }[],
+  today: string,
+): HabitDay[] {
+  const byDay = new Map<string, { start: number; end: number } | null>()
+  for (const r of rows) {
+    if (r.logical_day > today) continue
+    const prev = byDay.get(r.logical_day)
+    if (r.done) byDay.set(r.logical_day, { start: r.start, end: r.end })
+    else if (prev === undefined) byDay.set(r.logical_day, null)
+  }
+  const days = [...byDay.keys()].sort()
   if (!days.length) return []
-  const out: { day: string; status: 'done' | 'missed' | 'pending' }[] = []
+  const out: HabitDay[] = []
   for (let d = today; d >= days[0]; d = shiftDay(d, -1)) {
-    const done = doneByDay.get(d) ?? false
-    out.push({ day: d, status: done ? 'done' : d === today ? 'pending' : 'missed' })
+    const done = byDay.get(d)
+    if (done) out.push({ day: d, status: 'done', start: done.start, minutes: Math.round((done.end - done.start) * 60) })
+    else out.push({ day: d, status: d === today ? 'pending' : 'missed' })
   }
   return out
 }

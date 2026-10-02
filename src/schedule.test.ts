@@ -109,21 +109,21 @@ test('Habits on an upcoming day fill gaps from 3pm; on today from the next quart
 
 test('habitHistory lists each day from the first through today, newest first', () => {
   const rows = [
-    { logical_day: '2026-09-29', done: true },
-    { logical_day: '2026-10-01', done: false },
-    { logical_day: '2026-10-02', done: true },
-    { logical_day: '2026-10-03', done: false }, // upcoming, left off
+    { logical_day: '2026-09-29', done: true, start: at(19, 41), end: at(19, 56) },
+    { logical_day: '2026-10-01', done: false, start: 15, end: at(15, 15) },
+    { logical_day: '2026-10-02', done: true, start: at(11, 45), end: at(12, 30) },
+    { logical_day: '2026-10-03', done: false, start: 15, end: at(15, 15) }, // upcoming, left off
   ]
   assert.deepEqual(habitHistory(rows, '2026-10-02'), [
-    { day: '2026-10-02', status: 'done' },
+    { day: '2026-10-02', status: 'done', start: at(11, 45), minutes: 45 },
     { day: '2026-10-01', status: 'missed' },
     { day: '2026-09-30', status: 'missed' }, // never placed, counts as not done
-    { day: '2026-09-29', status: 'done' },
+    { day: '2026-09-29', status: 'done', start: at(19, 41), minutes: 15 },
   ])
 })
 
 test('habitHistory marks today as pending until it is done', () => {
-  assert.deepEqual(habitHistory([{ logical_day: '2026-10-02', done: false }], '2026-10-02'), [
+  assert.deepEqual(habitHistory([{ logical_day: '2026-10-02', done: false, start: 15, end: at(15, 15) }], '2026-10-02'), [
     { day: '2026-10-02', status: 'pending' },
   ])
   assert.deepEqual(habitHistory([], '2026-10-02'), [])

@@ -682,11 +682,12 @@ function HabitHistory({ habit, today }: { habit: Habit; today: string }) {
   useEffect(() => {
     supabase
       .from('cass_time_blocks')
-      .select('logical_day,done')
+      .select('day,logical_day,start_time,end_time,done')
       .eq('habit_id', habit.id)
       .then(({ data, error }) => {
         if (error) setError(error.message)
-        setRows(habitHistory(data ?? [], today))
+        const withTimes = (data ?? []).map((b) => ({ ...b, ...fromStored(b.day, b.start_time, b.end_time) }))
+        setRows(habitHistory(withTimes, today))
       })
   }, [habit.id, today])
 
@@ -715,7 +716,11 @@ function HabitHistory({ habit, today }: { habit: Habit; today: string }) {
                 )}
                 <Text style={[styles.todoText, { flex: 1 }]}>{r.day === today ? 'Today' : dayLabel(r.day)}</Text>
                 <Text style={styles.minutesLabel}>
-                  {r.status === 'done' ? 'Done' : r.status === 'pending' ? 'Not done yet' : 'Not done'}
+                  {r.status === 'done'
+                    ? `${clock(r.start)} · ${r.minutes} min`
+                    : r.status === 'pending'
+                      ? 'Not done yet'
+                      : 'Not done'}
                 </Text>
               </View>
             ))}
