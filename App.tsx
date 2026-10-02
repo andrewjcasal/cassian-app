@@ -152,11 +152,9 @@ function SignIn() {
 type Tab = 'todos' | 'agenda'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
 type Menu = { item: CalItem; x: number; y: number }
-// What the tap-to-open card shows, and what a new length gets saved against
-type Detail = { title: string; day: string; start: number; end: number } & (
-  | { from: 'todo'; todo: Todo }
-  | { from: 'item'; item: CalItem }
-)
+// What the tap-to-open card shows. It keeps only the id, and a new length is
+// saved against the current todo or block, never a copy from when it opened.
+type Detail = { id: string; from: 'todo' | 'item'; title: string; day: string; start: number; end: number }
 
 function DayPage() {
   const today = toDayString(new Date())
@@ -260,7 +258,7 @@ function DayPage() {
     )
     const failed = results.find((r) => r.error)
     if (failed?.error) setError(failed.error.message)
-    load()
+    await load()
   }
 
   // New todos and follow-ups fill the first gap that fits
@@ -314,9 +312,14 @@ function DayPage() {
 
   // The card's slider saves a new length, then the card shows the new end
   const resizeDetail = async (d: Detail, minutes: number) => {
-    if (d.from === 'todo') await setMinutes(d.todo, minutes)
-    else {
-      const plan = resizeItemPlan(items, d.item, minutes)
+    if (d.from === 'todo') {
+      const todo = todos.find((t) => t.id === d.id)
+      if (!todo) return setError('That todo changed; close the card and open it again')
+      await setMinutes(todo, minutes)
+    } else {
+      const item = items.find((it) => it.id === d.id)
+      if (!item) return setError('That block changed; close the card and open it again')
+      const plan = resizeItemPlan(items, item, minutes)
       if ('error' in plan) return setError(plan.error)
       if (plan.moves.length) await saveMoves(plan.moves)
     }
@@ -326,7 +329,7 @@ function DayPage() {
   const setMinutes = async (todo: Todo, minutes: number) => {
     const plan = resizePlan(todos, todo, minutes)
     if ('error' in plan) return setError(plan.error)
-    if (plan.moves.length) saveMoves(plan.moves)
+    if (plan.moves.length) await saveMoves(plan.moves)
   }
 
   if (view === 'habits') return <HabitsScreen onBack={() => setView('day')} />
@@ -395,7 +398,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ title: t.title, day: t.day, start: t.start, end: t.end, from: 'todo', todo: t })} />
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end })} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -416,7 +419,7 @@ function DayPage() {
             items={items}
             showNow={day === today}
             onMore={(item, x, y) => setMenu({ item, x, y })}
-            onOpen={(item) => setDetail({ title: item.title, day, start: item.start, end: item.end, from: 'item', item })}
+            onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end })}
           />
         )}
 
