@@ -19,7 +19,19 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
-import { ChevronLeft, ChevronRight, GripVertical, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  GripVertical,
+  ListTodo,
+  LogOut,
+  MoreHorizontal,
+  NotebookPen,
+  Plus,
+  Repeat,
+  Settings,
+} from 'lucide-react-native'
 import Slider from '@react-native-community/slider'
 import { supabase } from './src/supabase'
 import {
@@ -154,7 +166,7 @@ function SignIn() {
   )
 }
 
-type Tab = 'todos' | 'agenda'
+type Tab = 'todos' | 'agenda' | 'habits' | 'planning'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
 type Menu = { item: CalItem; x: number; y: number }
 // What the tap-to-open card shows. It keeps only the id, and a new length is
@@ -177,8 +189,8 @@ function DayPage() {
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [navMenu, setNavMenu] = useState<{ x: number; y: number } | null>(null)
-  const [view, setView] = useState<'day' | 'habits'>('day')
+  // Where the settings icon was tapped, so its menu opens beside it
+  const [settingsMenu, setSettingsMenu] = useState<{ x: number; y: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
@@ -374,8 +386,6 @@ function DayPage() {
     if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
   }
 
-  if (view === 'habits') return <HabitsScreen onBack={() => setView('day')} />
-
   // Dragging a todo to a new spot re-packs the swapped range back to back from
   // where its first todo started, each keeping its own length.
   const reorder = async (next: Todo[]) => {
@@ -392,6 +402,11 @@ function DayPage() {
 
   return (
     <View style={styles.screen}>
+      {tab === 'habits' ? (
+        <HabitsScreen onSettings={setSettingsMenu} />
+      ) : tab === 'planning' ? (
+        <PlanningScreen onSettings={setSettingsMenu} />
+      ) : (
       <ScrollView
         scrollEnabled={!dragging}
         contentContainerStyle={styles.page}
@@ -410,27 +425,8 @@ function DayPage() {
             <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
               <ChevronRight size={22} color={c.ink} />
             </Pressable>
-            <Pressable
-              onPress={(e) => setNavMenu({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })}
-              hitSlop={10}
-              accessibilityLabel="Menu"
-            >
-              <MenuIcon size={20} color={c.ink} />
-            </Pressable>
+            <SettingsButton onOpen={setSettingsMenu} />
           </View>
-        </View>
-
-        <View style={styles.tabs}>
-          {(
-            [
-              ['todos', 'Todos'],
-              ['agenda', 'Agenda'],
-            ] as const
-          ).map(([key, label]) => (
-            <Pressable key={key} style={[styles.tab, tab === key && styles.tabActive]} onPress={() => setTab(key)}>
-              <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
-            </Pressable>
-          ))}
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -463,6 +459,25 @@ function DayPage() {
         )}
 
       </ScrollView>
+      )}
+
+      <View style={styles.tabBar}>
+        {TABS.map(({ key, label, Icon }) => {
+          const active = tab === key
+          return (
+            <Pressable
+              key={key}
+              style={styles.tabItem}
+              onPress={() => setTab(key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Icon size={20} color={active ? c.accent : c.muted} />
+              <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
+            </Pressable>
+          )
+        })}
+      </View>
 
       <Modal visible={menu !== null} transparent animationType="none" onRequestClose={() => setMenu(null)}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(null)}>
@@ -493,24 +508,14 @@ function DayPage() {
         </Pressable>
       </Modal>
 
-      <Modal visible={navMenu !== null} transparent animationType="none" onRequestClose={() => setNavMenu(null)}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setNavMenu(null)}>
-          {navMenu ? (
-            <View style={[styles.menu, { top: navMenu.y + 12, right: Math.max(8, width - navMenu.x - 12) }]}>
+      <Modal visible={settingsMenu !== null} transparent animationType="none" onRequestClose={() => setSettingsMenu(null)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsMenu(null)}>
+          {settingsMenu ? (
+            <View style={[styles.menu, { top: settingsMenu.y + 12, right: Math.max(8, width - settingsMenu.x - 12) }]}>
               <Pressable
                 style={[styles.menuItem, styles.menuRow]}
                 onPress={() => {
-                  setNavMenu(null)
-                  setView('habits')
-                }}
-              >
-                <Repeat size={16} color={c.ink} />
-                <Text style={styles.menuText}>Habits</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.menuItem, styles.menuRow]}
-                onPress={() => {
-                  setNavMenu(null)
+                  setSettingsMenu(null)
                   supabase.auth.signOut()
                 }}
               >
@@ -527,7 +532,46 @@ function DayPage() {
 
 type Habit = { id: string; title: string; minutes: number }
 
-function HabitsScreen({ onBack }: { onBack: () => void }) {
+const TABS = [
+  { key: 'todos', label: 'Todos', Icon: ListTodo },
+  { key: 'agenda', label: 'Agenda', Icon: CalendarDays },
+  { key: 'habits', label: 'Habits', Icon: Repeat },
+  { key: 'planning', label: 'Planning', Icon: NotebookPen },
+] as const
+
+// Opens the settings menu (just Sign out) beside where it was tapped
+function SettingsButton({ onOpen }: { onOpen: (at: { x: number; y: number }) => void }) {
+  return (
+    <Pressable
+      onPress={(e) => onOpen({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })}
+      hitSlop={10}
+      accessibilityLabel="Settings"
+    >
+      <Settings size={20} color={c.ink} />
+    </Pressable>
+  )
+}
+
+// Title on the left, settings on the right, for the tabs without day navigation
+function ScreenHeader({ title, onSettings }: { title: string; onSettings: (at: { x: number; y: number }) => void }) {
+  return (
+    <View style={styles.header}>
+      <Text style={styles.title}>{title}</Text>
+      <SettingsButton onOpen={onSettings} />
+    </View>
+  )
+}
+
+// Planning is a blank screen for now
+function PlanningScreen({ onSettings }: { onSettings: (at: { x: number; y: number }) => void }) {
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <ScreenHeader title="Planning" onSettings={onSettings} />
+    </ScrollView>
+  )
+}
+
+function HabitsScreen({ onSettings }: { onSettings: (at: { x: number; y: number }) => void }) {
   const [habits, setHabits] = useState<Habit[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -544,13 +588,7 @@ function HabitsScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
-      <View style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={10} accessibilityLabel="Back">
-          <ChevronLeft size={22} color={c.ink} />
-        </Pressable>
-        <Text style={styles.title}>Habits</Text>
-        <View style={{ width: 22 }} />
-      </View>
+      <ScreenHeader title="Habits" onSettings={onSettings} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.card}>
         {habits.map((h) => (
@@ -902,11 +940,17 @@ const styles = StyleSheet.create({
   card: { backgroundColor: c.card, borderRadius: 10, borderWidth: 1, borderColor: c.line, padding: 4 },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8 },
   addRowDivider: { borderTopWidth: 1, borderTopColor: c.line },
-  tabs: { flexDirection: 'row', gap: 4, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: c.line },
-  tab: { paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 2, borderBottomColor: 'transparent', marginBottom: -1 },
-  tabActive: { borderBottomColor: c.accent },
-  tabText: { fontSize: 16, color: c.muted },
-  tabTextActive: { color: c.ink, fontWeight: '600' },
+  tabBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: c.line,
+    backgroundColor: c.card,
+    paddingTop: 6,
+    paddingBottom: 4,
+  },
+  tabItem: { flex: 1, alignItems: 'center', gap: 2 },
+  tabLabel: { fontSize: 12, fontWeight: '600', color: c.muted },
+  tabLabelActive: { color: c.accent },
   todoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 8 },
   todoText: { fontSize: 16, color: c.ink },
   handle: { paddingVertical: 6, paddingRight: 2 },
