@@ -32,7 +32,10 @@ import {
   durationOptions,
   newBlockStart,
   halfSides,
-  hoursOf,
+  DAY_START,
+  fromStored,
+  logicalNow,
+  toStored,
   isDoneEarly,
   menuOptions,
   moveStartPlan,
@@ -45,7 +48,6 @@ import {
   shiftDay,
   startNowPlan,
   timeOf,
-  toDayString,
 } from './src/schedule'
 
 const HOUR_PX = 80
@@ -81,9 +83,9 @@ function dayLabel(day: string) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
 }
 
+// How far into today we are; before 6am that's 24 plus the hour (see logicalNow)
 function nowHours() {
-  const now = new Date()
-  return now.getHours() + now.getMinutes() / 60
+  return logicalNow(new Date()).hours
 }
 
 export default function App() {
@@ -160,7 +162,7 @@ type Menu = { item: CalItem; x: number; y: number }
 type Detail = { id: string; from: 'todo' | 'item'; title: string; day: string; start: number; end: number }
 
 function DayPage() {
-  const today = toDayString(new Date())
+  const today = logicalNow(new Date()).day
   const [day, setDay] = useState(today)
   const [tab, setTab] = useState<Tab>('agenda')
   const [items, setItems] = useState<CalItem[]>([])
@@ -176,21 +178,27 @@ function DayPage() {
   const { width } = useWindowDimensions()
 
   const fetchItems = useCallback(async () => {
-    const [blockRes, taskRes] = await Promise.all([
-      supabase.from('cass_time_blocks').select('id,title,start_time,end_time,done,habit_id,source,done_at').eq('day', day).order('start_time'),
-      supabase.from('cass_tasks').select('id,title,start_time,end_time,done').eq('day', day).not('start_time', 'is', null),
+    // The day runs 6am to 6am: this date from 6am on, plus the next date before 6am
+    const next = shiftDay(day, 1)
+    const morning = timeOf(DAY_START)
+    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at'
+    const taskCols = 'id,title,day,start_time,end_time,done'
+    const [blockRes, lateBlockRes, taskRes, lateTaskRes] = await Promise.all([
+      supabase.from('cass_time_blocks').select(blockCols).eq('day', day).gte('start_time', morning),
+      supabase.from('cass_time_blocks').select(blockCols).eq('day', next).lt('start_time', morning),
+      supabase.from('cass_tasks').select(taskCols).eq('day', day).gte('start_time', morning),
+      supabase.from('cass_tasks').select(taskCols).eq('day', next).lt('start_time', morning),
     ])
-    const err = blockRes.error ?? taskRes.error
+    const err = blockRes.error ?? lateBlockRes.error ?? taskRes.error ?? lateTaskRes.error
     if (err) setError(err.message)
-    const blocks: CalItem[] = (blockRes.data ?? []).map((b) => {
-      const start = hoursOf(b.start_time)
-      const end = b.end_time ? hoursOf(b.end_time) : start + 0.5
+    const blocks: CalItem[] = [...(blockRes.data ?? []), ...(lateBlockRes.data ?? [])].map((b) => {
+      const { start, end } = fromStored(b.day, b.start_time, b.end_time)
       const doneEarly = isDoneEarly(b.done, b.done_at, day, start)
       return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source, doneEarly }
     })
-    const tasks: CalItem[] = (taskRes.data ?? []).map((t) => {
-      const start = hoursOf(t.start_time!)
-      return { id: t.id, title: t.title, start, end: t.end_time ? hoursOf(t.end_time) : start + 0.5, kind: 'task', done: t.done }
+    const tasks: CalItem[] = [...(taskRes.data ?? []), ...(lateTaskRes.data ?? [])].map((t) => {
+      const { start, end } = fromStored(t.day, t.start_time!, t.end_time)
+      return { id: t.id, title: t.title, start, end, kind: 'task', done: t.done }
     })
     return [...blocks, ...tasks].sort((a, b) => a.start - b.start)
   }, [day])
@@ -205,10 +213,8 @@ function DayPage() {
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
           {
-            day,
+            ...toStored(day, p.start, p.end),
             title: p.title,
-            start_time: timeOf(p.start),
-            end_time: timeOf(p.end),
             kind: 'personal',
             source: 'habit',
             habit_id: p.habitId,
@@ -238,8 +244,8 @@ function DayPage() {
     setItems(current)
     setTodos(
       (todoRes.data ?? []).map((t) => {
-        const start = hoursOf(t.start_time)
-        return { id: t.id, title: t.title, day: t.day, start, end: t.end_time ? hoursOf(t.end_time) : start + 1, habit: !!t.habit_id }
+        const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
+        return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id }
       }),
     )
     setLoading(false)
@@ -249,13 +255,15 @@ function DayPage() {
     load()
   }, [load])
 
-  // Saves new times for every moved block, then reloads
-  const saveMoves = async (moves: Move[]) => {
+  // Saves new times for every moved block, then reloads. Times are hours into
+  // `dayOf(id)` (the viewed day unless said otherwise), so one past midnight is
+  // stored on the next date.
+  const saveMoves = async (moves: Move[], dayOf: (id: string) => string = () => day) => {
     const results = await Promise.all(
       moves.map((m) =>
         supabase
           .from(m.kind === 'block' ? 'cass_time_blocks' : 'cass_tasks')
-          .update({ start_time: timeOf(m.start), end_time: timeOf(m.end) })
+          .update(toStored(dayOf(m.id), m.start, m.end))
           .eq('id', m.id),
       ),
     )
@@ -270,7 +278,7 @@ function DayPage() {
     if (start === null) return setError(`No room left today for ${label}`)
     const { error } = await supabase
       .from('cass_time_blocks')
-      .insert({ day, title, start_time: timeOf(start), end_time: timeOf(start + length), kind: 'personal', source: 'app' })
+      .insert({ ...toStored(day, start, start + length), title, kind: 'personal', source: 'app' })
     if (error) return setError(error.message)
     load()
   }
@@ -298,7 +306,7 @@ function DayPage() {
       const plan = donePlan(items, item, day, today, now)
       const update: Record<string, unknown> = { done: true }
       if (item.kind === 'block') update.done_at = new Date().toISOString()
-      if (plan.endAt !== null) update.end_time = timeOf(plan.endAt)
+      if (plan.endAt !== null) update.end_time = toStored(day, item.start, plan.endAt).end_time
       const { error } = await supabase.from(table).update(update).eq('id', item.id)
       if (error) return setError(error.message)
       return saveMoves(plan.moves)
@@ -336,6 +344,9 @@ function DayPage() {
       const todo = todos.find((t) => t.id === d.id)
       if (!todo) return setError('That todo changed; close the card and open it again')
       plan = moveTodoStartPlan(todos, todo, start)
+      if ('error' in plan) return setError(plan.error)
+      if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
+      return setDetail({ ...d, start, end: start + (d.end - d.start) })
     } else {
       const item = items.find((it) => it.id === d.id)
       if (!item) return setError('That block changed; close the card and open it again')
@@ -349,7 +360,7 @@ function DayPage() {
   const setMinutes = async (todo: Todo, minutes: number) => {
     const plan = resizePlan(todos, todo, minutes)
     if ('error' in plan) return setError(plan.error)
-    if (plan.moves.length) await saveMoves(plan.moves)
+    if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
   }
 
   if (view === 'habits') return <HabitsScreen onBack={() => setView('day')} />
@@ -361,14 +372,11 @@ function DayPage() {
     if (!updates.length) return
     const moved = new Map(updates.map((u) => [u.id, u]))
     setTodos(next.map((t) => ({ ...t, ...(moved.get(t.id) ?? {}) })))
-    const results = await Promise.all(
-      updates.map((u) =>
-        supabase.from('cass_time_blocks').update({ start_time: timeOf(u.start), end_time: timeOf(u.end) }).eq('id', u.id),
-      ),
+    const dayById = new Map(todos.map((t) => [t.id, t.day]))
+    await saveMoves(
+      updates.map((u) => ({ ...u, kind: 'block' as const })),
+      (id) => dayById.get(id) ?? day,
     )
-    const failed = results.find((r) => r.error)
-    if (failed?.error) setError(failed.error.message)
-    load()
   }
 
   return (
@@ -802,8 +810,7 @@ function DayGrid({
   onMore: (item: CalItem, x: number, y: number) => void
   onOpen: (item: CalItem) => void
 }) {
-  const now = new Date()
-  const nowHours = now.getHours() + now.getMinutes() / 60
+  const nowHours = logicalNow(new Date()).hours
   const first = showNow ? Math.max(0, Math.floor(nowHours - LOOKBACK_HOURS)) : FIRST_HOUR
   const last = showNow ? Math.min(LAST_HOUR, Math.ceil(nowHours + LOOKAHEAD_HOURS)) : LAST_HOUR
   const hours = useMemo(() => Array.from({ length: last - first }, (_, i) => first + i), [first, last])

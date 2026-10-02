@@ -31,6 +31,10 @@ export const DURATION_STEPS = [5, 15, 30, 45, 60, 90, 120, 180, 240]
 
 const EPS = 1e-6
 
+// A day runs 6am to 6am, and blocks can be scheduled until 2am (hour 26)
+export const DAY_START = 6
+export const DAY_END = 26
+
 // "13:30:00" -> 13.5
 export function hoursOf(time: string) {
   const [h, m] = time.split(':').map(Number)
@@ -74,6 +78,42 @@ export function dateAt(day: string, hours: number) {
   return new Date(y, m - 1, d, Math.floor(total / 60), total % 60)
 }
 
+// Which day it is and how far into it, for a day that runs 6am to 6am: at 1:30am
+// on the 2nd it's still the 1st, 25.5 hours in.
+export function logicalNow(date: Date) {
+  const hours = date.getHours() + date.getMinutes() / 60
+  if (hours >= DAY_START) return { day: toDayString(date), hours }
+  return { day: shiftDay(toDayString(date), -1), hours: hours + 24 }
+}
+
+// Blocks keep real calendar dates in the database, which can't hold an hour past
+// 24. A block starting after midnight is stored on the next date; one crossing
+// midnight is stored on its start date with an end earlier than its start.
+export function toStored(day: string, start: number, end: number) {
+  const next = start >= 24 - EPS
+  return {
+    day: next ? shiftDay(day, 1) : day,
+    start_time: timeOf(next ? start - 24 : start),
+    end_time: timeOf(end >= 24 - EPS ? end - 24 : end),
+  }
+}
+
+// The reverse: a block stored before 6am belongs to the night before, and an end
+// earlier than its start means it ran past midnight.
+export function fromStored(storedDay: string, startTime: string, endTime: string | null) {
+  let start = hoursOf(startTime)
+  let end = endTime ? hoursOf(endTime) : start + 0.5
+  let day = storedDay
+  if (start < DAY_START - EPS) {
+    day = shiftDay(storedDay, -1)
+    start += 24
+    end += 24
+  } else if (end < start + EPS) {
+    end += 24
+  }
+  return { day, start, end }
+}
+
 // The current time to the minute, as fractional hours
 export function minuteOf(now: number) {
   return Math.floor(now * 60) / 60
@@ -109,7 +149,7 @@ const shift = (it: { id: string; kind: 'block' | 'task'; start: number; end: num
 })
 
 // The first gap at or after `from` that fits `length` hours between the day's
-// blocks, or null if nothing fits before midnight. A block done early has given
+// blocks, or null if nothing fits before 2am. A block done early has given
 // its slot back, so it doesn't count as taken.
 export function freeSlot(items: CalItem[], from: number, length: number) {
   let cursor = from
@@ -118,12 +158,12 @@ export function freeSlot(items: CalItem[], from: number, length: number) {
     if (it.start - cursor >= length - EPS) return cursor
     cursor = Math.max(cursor, it.end)
   }
-  return cursor + length <= 24 + EPS ? cursor : null
+  return cursor + length <= DAY_END + EPS ? cursor : null
 }
 
 // Where a new todo or follow-up of `length` hours starts: the first gap that fits
 // it, looking from 3pm, or from the next quarter hour today if that's later. Null
-// if nothing fits before midnight.
+// if nothing fits before 2am.
 export function newBlockStart(items: CalItem[], length: number, isToday: boolean, now: number) {
   const from = isToday ? Math.max(FILL_FROM_HOUR, nextQuarter(now)) : FILL_FROM_HOUR
   return freeSlot(items, from, length)
@@ -156,7 +196,7 @@ export function startNowPlan(items: CalItem[], item: CalItem, now: number): { mo
   const delta = minuteOf(now) - item.start
   if (delta <= 0) return { moves: [] }
   const later = carried(items, item, item.start)
-  if (Math.max(item.end, ...later.map((it) => it.end)) + delta > 24 + EPS) return { error: 'That runs past midnight' }
+  if (Math.max(item.end, ...later.map((it) => it.end)) + delta > DAY_END + EPS) return { error: 'That runs past 2am' }
   return { moves: [item, ...later].map((it) => shift(it, delta)) }
 }
 
@@ -196,7 +236,7 @@ export function notStartedPlan(
   const length = item.end - item.start
   if (day !== today) {
     const start = Math.max(item.start, ...items.filter((it) => it.id !== item.id).map((it) => it.end))
-    if (start + length > 24 + EPS) return { error: 'No room left that day to move that block' }
+    if (start + length > DAY_END + EPS) return { error: 'No room left that day to move that block' }
     return { moves: [{ id: item.id, kind: item.kind, start, end: start + length }] }
   }
   const at = minuteOf(now)
@@ -217,7 +257,7 @@ export function notStartedPlan(
     moves.push({ id: it.id, kind: it.kind, start: cursor, end: cursor + len })
     cursor += len
   }
-  if (cursor > 24 + EPS) return { error: 'That runs past midnight' }
+  if (cursor > DAY_END + EPS) return { error: 'That runs past 2am' }
   return { moves }
 }
 
@@ -260,7 +300,7 @@ function moveWith(target: Move, others: Move[], newStart: number): { moves: Move
   const length = target.end - target.start
   const moved = { ...target, start: newStart, end: newStart + length }
   const moves = [moved, ...pushFrom(others.filter((o) => o.start >= newStart - EPS), moved.end)]
-  if (Math.max(...moves.map((m) => m.end)) > 24 + EPS) return { error: 'That runs past midnight' }
+  if (Math.max(...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
   return { moves }
 }
 
@@ -280,7 +320,7 @@ function resizeWith(target: Move, later: Move[], minutes: number): { moves: Move
   const newEnd = target.start + minutes / 60
   if (Math.abs(newEnd - target.end) < EPS) return { moves: [] }
   const moves = [{ ...target, end: newEnd }, ...followOn(later, target.end, newEnd)]
-  if (Math.max(...moves.map((m) => m.end)) > 24 + EPS) return { error: 'That runs past midnight' }
+  if (Math.max(...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
   return { moves }
 }
 
