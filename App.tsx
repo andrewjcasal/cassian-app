@@ -165,7 +165,13 @@ function DayPage() {
   const today = logicalNow(new Date()).day
   const [day, setDay] = useState(today)
   const [tab, setTab] = useState<Tab>('agenda')
-  const [items, setItems] = useState<CalItem[]>([])
+  // Blocks are kept with the day they were loaded for, so switching days shows an
+  // empty grid until the new day arrives, never the previous day's blocks
+  const [loaded, setLoaded] = useState<{ day: string; items: CalItem[] }>({ day: '', items: [] })
+  const items = loaded.day === day ? loaded.items : []
+  // Only the latest load may write, so a slow response for a day you've already
+  // left can't land on top of the one you're looking at
+  const latestLoad = useRef(0)
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
@@ -231,6 +237,7 @@ function DayPage() {
   )
 
   const load = useCallback(async () => {
+    const run = ++latestLoad.current
     setLoading(true)
     setError(null)
     const todoRes = await supabase
@@ -242,8 +249,10 @@ function DayPage() {
       .order('start_time')
     if (todoRes.error) setError(todoRes.error.message)
     let current = await fetchItems()
+    if (run !== latestLoad.current) return
     if (day === today && (await placeHabitBlocks(current))) current = await fetchItems()
-    setItems(current)
+    if (run !== latestLoad.current) return
+    setLoaded({ day, items: current })
     setTodos(
       (todoRes.data ?? []).map((t) => {
         const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
