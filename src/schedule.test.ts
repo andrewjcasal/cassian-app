@@ -233,7 +233,7 @@ test('relayout re-packs the swapped range back to back', () => {
 test('menuOptions follows the block timing', () => {
   const keys = (item: CalItem, day: string, now: number) => menuOptions(item, day, DAY, now).map(([k]) => k).join(',')
   const now = at(18, 12)
-  assert.equal(keys(block('ended', 15, 16), DAY, now), 'start_now,done,not_started,follow_up')
+  assert.equal(keys(block('ended', 15, 16), DAY, now), 'done,not_started,follow_up')
   assert.equal(keys(block('underway', 18, 19), DAY, now), 'start_now,done')
   assert.equal(keys(block('later', 19, 20), DAY, now), 'done,follow_up')
   assert.equal(keys(block('earlier day', 19, 20), '2026-09-30', now), 'done,not_started,follow_up')

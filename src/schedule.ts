@@ -258,16 +258,16 @@ export function relayout(before: Todo[], after: Todo[]) {
   return updates
 }
 
-// The block menu. Done hides once a block is done. Start now shows once a
-// block's start has passed today. Not
-// started shows only once its end has passed (any earlier day counts). Add
-// follow-up hides while the block is under way.
+// The block menu. Done hides once a block is done. Start now shows only while a
+// block is under way; once it has ended, Not started covers it. Not started
+// shows only once its end has passed (any earlier day counts). Add follow-up
+// hides while the block is under way.
 export function menuOptions(item: CalItem, day: string, today: string, now: number) {
   const isToday = day === today
   const inProgress = isToday && item.start <= now && now < item.end
   const ended = day < today || (isToday && item.end <= now)
   const options: [Status, string][] = []
-  if (isToday && !item.done && item.start < minuteOf(now)) options.push(['start_now', 'Start now'])
+  if (inProgress && !item.done && item.start < minuteOf(now)) options.push(['start_now', 'Start now'])
   if (!item.done) options.push(['done', 'Done'])
   if (ended) options.push(['not_started', 'Not started'])
   if (!inProgress) options.push(['follow_up', 'Add follow-up'])
