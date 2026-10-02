@@ -57,7 +57,8 @@ const SHORT_MIN_PX = 20
 // Today's grid shows this many hours before and after now
 const LOOKBACK_HOURS = 3
 const LOOKAHEAD_HOURS = 5
-const LAST_HOUR = 24
+// The agenda runs to 2am (hour 26); scheduling itself still stops at midnight
+const LAST_HOUR = 26
 
 const c = {
   bg: '#fafaf7',
@@ -804,7 +805,7 @@ function DayGrid({
   const now = new Date()
   const nowHours = now.getHours() + now.getMinutes() / 60
   const first = showNow ? Math.max(0, Math.floor(nowHours - LOOKBACK_HOURS)) : FIRST_HOUR
-  const last = showNow ? Math.min(24, Math.ceil(nowHours + LOOKAHEAD_HOURS)) : LAST_HOUR
+  const last = showNow ? Math.min(LAST_HOUR, Math.ceil(nowHours + LOOKAHEAD_HOURS)) : LAST_HOUR
   const hours = useMemo(() => Array.from({ length: last - first }, (_, i) => first + i), [first, last])
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
   const visible = items.filter((it) => it.end > first && it.start < last)
