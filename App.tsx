@@ -555,7 +555,7 @@ function DayPage() {
         </Pressable>
       </Modal>
 
-      <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={() => setDetail(null)}>
+      <Modal visible={detail !== null} transparent animationType="none" onRequestClose={() => setDetail(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setDetail(null)}>
           {detail ? (
             <DetailCard
@@ -732,7 +732,7 @@ function HabitsScreen({
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
-      <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
+      <Modal visible={selected !== null} transparent animationType="none" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setSelected(null)}>
           {selected ? (
             <HabitHistory
@@ -766,8 +766,8 @@ function HabitHistory({
   const doneCount = past.filter((r) => r.status === 'done').length
 
   return (
-    // Swallows taps so only the backdrop closes the card
-    <Pressable style={[styles.detailCard, styles.historyCard]} onPress={() => {}}>
+    // Claims taps on the card so only the backdrop closes it
+    <View style={[styles.detailCard, styles.historyCard]} onStartShouldSetResponder={() => true}>
       <Text style={styles.detailTitle}>{habit.title}</Text>
       <View style={styles.segment}>
         {(['daily', 'weekly'] as const).map((f) => {
@@ -839,7 +839,7 @@ function HabitHistory({
       ) : (
         <Text style={styles.historySummary}>No days yet</Text>
       )}
-    </Pressable>
+    </View>
   )
 }
 
@@ -876,8 +876,8 @@ function DetailCard({
   const start = startMin / 60
 
   return (
-    // Swallows taps so only the backdrop closes the card
-    <Pressable style={styles.detailCard} onPress={() => {}}>
+    // Claims taps on the card so only the backdrop closes it
+    <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
       <Text style={styles.detailTitle}>{detail.title}</Text>
       {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
       <Text style={styles.detailTimes}>
@@ -934,7 +934,7 @@ function DetailCard({
           </Pressable>
         </View>
       )}
-    </Pressable>
+    </View>
   )
 }
 
