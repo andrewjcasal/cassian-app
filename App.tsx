@@ -594,6 +594,9 @@ function DayPage() {
 
 type Habit = { id: string; title: string; minutes: number; frequency: 'daily' | 'weekly'; weekday: number | null }
 
+// One of a habit's blocks, with its 6am to 6am day and times
+type HabitBlock = { logical_day: string; done: boolean; start: number; end: number }
+
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const WEEKDAY_NAMES = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays']
 
@@ -646,16 +649,25 @@ function HabitsScreen({
   const [habits, setHabits] = useState<Habit[]>([])
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Habit | null>(null)
+  // Every habit's blocks, loaded with the list so a habit's history is ready the
+  // moment its card opens
+  const [blocksByHabit, setBlocksByHabit] = useState<Map<string, HabitBlock[]>>(new Map())
 
   useEffect(() => {
-    supabase
-      .from('cass_habits')
-      .select('id,title,minutes,frequency,weekday')
-      .order('sort_order')
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        setHabits(data ?? [])
-      })
+    Promise.all([
+      supabase.from('cass_habits').select('id,title,minutes,frequency,weekday').order('sort_order'),
+      supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done').not('habit_id', 'is', null),
+    ]).then(([habitRes, blockRes]) => {
+      const err = habitRes.error ?? blockRes.error
+      if (err) setError(err.message)
+      setHabits(habitRes.data ?? [])
+      const byHabit = new Map<string, HabitBlock[]>()
+      for (const b of blockRes.data ?? []) {
+        const row = { logical_day: b.logical_day, done: b.done, ...fromStored(b.day, b.start_time, b.end_time) }
+        byHabit.set(b.habit_id, [...(byHabit.get(b.habit_id) ?? []), row])
+      }
+      setBlocksByHabit(byHabit)
+    })
   }, [])
 
   // Saves daily/weekly and the weekday. Unfinished blocks after today are cleared
@@ -676,6 +688,13 @@ function HabitsScreen({
       .eq('done', false)
       .gt('logical_day', today)
     if (cleared.error) setError(cleared.error.message)
+    // The cleared blocks were unfinished and after today, so they never show in
+    // the history; drop them here too so nothing stale lingers
+    setBlocksByHabit((map) => {
+      const nextMap = new Map(map)
+      nextMap.set(habit.id, (map.get(habit.id) ?? []).filter((b) => b.done || b.logical_day <= today))
+      return nextMap
+    })
   }
 
   const sections = [
@@ -711,7 +730,14 @@ function HabitsScreen({
 
       <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setSelected(null)}>
-          {selected ? <HabitHistory habit={selected} today={today} onSchedule={changeSchedule} /> : null}
+          {selected ? (
+            <HabitHistory
+              habit={selected}
+              blocks={blocksByHabit.get(selected.id) ?? []}
+              today={today}
+              onSchedule={changeSchedule}
+            />
+          ) : null}
         </Pressable>
       </Modal>
     </ScrollView>
@@ -721,29 +747,18 @@ function HabitsScreen({
 // Each day's done or not done for one habit (habitHistory in src/schedule.ts)
 function HabitHistory({
   habit,
+  blocks,
   today,
   onSchedule,
 }: {
   habit: Habit
+  blocks: HabitBlock[]
   today: string
   onSchedule: (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => void
 }) {
-  const [rows, setRows] = useState<ReturnType<typeof habitHistory> | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const rows = habitHistory(blocks, today, habit.frequency === 'weekly' ? habit.weekday : null)
 
-  useEffect(() => {
-    supabase
-      .from('cass_time_blocks')
-      .select('day,logical_day,start_time,end_time,done')
-      .eq('habit_id', habit.id)
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        const withTimes = (data ?? []).map((b) => ({ ...b, ...fromStored(b.day, b.start_time, b.end_time) }))
-        setRows(habitHistory(withTimes, today, habit.frequency === 'weekly' ? habit.weekday : null))
-      })
-  }, [habit.id, habit.frequency, habit.weekday, today])
-
-  const past = (rows ?? []).filter((r) => r.status !== 'pending')
+  const past = rows.filter((r) => r.status !== 'pending')
   const doneCount = past.filter((r) => r.status === 'done').length
 
   return (
@@ -790,8 +805,7 @@ function HabitHistory({
           </View>
         </>
       ) : null}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {rows && rows.length ? (
+      {rows.length ? (
         <>
           <Text style={styles.historySummary}>
             Done {doneCount} of {past.length} {past.length === 1 ? 'day' : 'days'}
@@ -818,9 +832,9 @@ function HabitHistory({
             ))}
           </ScrollView>
         </>
-      ) : rows ? (
+      ) : (
         <Text style={styles.historySummary}>No days yet</Text>
-      ) : null}
+      )}
     </Pressable>
   )
 }
