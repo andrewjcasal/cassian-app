@@ -44,7 +44,7 @@ import {
   toDayString,
 } from './src/schedule'
 
-const HOUR_PX = 48
+const HOUR_PX = 80
 const FIRST_HOUR = 6
 const EVENT_LEFT = 52
 const EVENT_RIGHT = 6
