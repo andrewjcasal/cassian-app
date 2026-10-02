@@ -21,8 +21,10 @@ import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import {
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   GripVertical,
   ListTodo,
   LogOut,
@@ -31,6 +33,7 @@ import {
   Plus,
   Repeat,
   Settings,
+  X,
 } from 'lucide-react-native'
 import Slider from '@react-native-community/slider'
 import { supabase } from './src/supabase'
@@ -55,6 +58,7 @@ import {
   moveStartPlan,
   moveTodoStartPlan,
   notStartedPlan,
+  habitHistory,
   habitSearchFrom,
   placeHabits,
   relayout,
@@ -450,7 +454,7 @@ function DayPage() {
   return (
     <View style={styles.screen}>
       {tab === 'habits' ? (
-        <HabitsScreen onSettings={setSettingsMenu} />
+        <HabitsScreen today={today} onSettings={setSettingsMenu} />
       ) : tab === 'planning' ? (
         <PlanningScreen onSettings={setSettingsMenu} />
       ) : (
@@ -625,9 +629,16 @@ function PlanningScreen({ onSettings }: { onSettings: (at: { x: number; y: numbe
   )
 }
 
-function HabitsScreen({ onSettings }: { onSettings: (at: { x: number; y: number }) => void }) {
+function HabitsScreen({
+  today,
+  onSettings,
+}: {
+  today: string
+  onSettings: (at: { x: number; y: number }) => void
+}) {
   const [habits, setHabits] = useState<Habit[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Habit | null>(null)
 
   useEffect(() => {
     supabase
@@ -640,18 +651,80 @@ function HabitsScreen({ onSettings }: { onSettings: (at: { x: number; y: number 
       })
   }, [])
 
+  if (selected) return <HabitHistory habit={selected} today={today} onBack={() => setSelected(null)} />
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <ScreenHeader title="Habits" onSettings={onSettings} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.card}>
         {habits.map((h) => (
-          <View key={h.id} style={styles.todoRow}>
+          <Pressable key={h.id} style={styles.todoRow} onPress={() => setSelected(h)}>
             <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
             <Text style={styles.minutesLabel}>{h.minutes} min</Text>
-          </View>
+            <ChevronRight size={18} color={c.muted} />
+          </Pressable>
         ))}
       </View>
+    </ScrollView>
+  )
+}
+
+// Each day's done or not done for one habit (habitHistory in src/schedule.ts)
+function HabitHistory({ habit, today, onBack }: { habit: Habit; today: string; onBack: () => void }) {
+  const [rows, setRows] = useState<ReturnType<typeof habitHistory> | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase
+      .from('cass_time_blocks')
+      .select('logical_day,done')
+      .eq('habit_id', habit.id)
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        setRows(habitHistory(data ?? [], today))
+      })
+  }, [habit.id, today])
+
+  const past = (rows ?? []).filter((r) => r.status !== 'pending')
+  const doneCount = past.filter((r) => r.status === 'done').length
+
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <View style={styles.header}>
+        <Pressable onPress={onBack} hitSlop={10} accessibilityLabel="Back to habits">
+          <ChevronLeft size={22} color={c.ink} />
+        </Pressable>
+        <Text style={styles.title}>{habit.title}</Text>
+        <View style={{ width: 22 }} />
+      </View>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {rows && rows.length ? (
+        <>
+          <Text style={styles.historySummary}>
+            Done {doneCount} of {past.length} {past.length === 1 ? 'day' : 'days'}
+          </Text>
+          <View style={styles.card}>
+            {rows.map((r) => (
+              <View key={r.day} style={styles.todoRow}>
+                {r.status === 'done' ? (
+                  <Check size={18} color={c.accent} />
+                ) : r.status === 'pending' ? (
+                  <Clock size={18} color={c.muted} />
+                ) : (
+                  <X size={18} color={c.muted} />
+                )}
+                <Text style={[styles.todoText, { flex: 1 }]}>{r.day === today ? 'Today' : dayLabel(r.day)}</Text>
+                <Text style={styles.minutesLabel}>
+                  {r.status === 'done' ? 'Done' : r.status === 'pending' ? 'Not done yet' : 'Not done'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </>
+      ) : rows ? (
+        <Text style={styles.historySummary}>No days yet</Text>
+      ) : null}
     </ScrollView>
   )
 }
@@ -1080,6 +1153,7 @@ const styles = StyleSheet.create({
   },
   menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  historySummary: { fontSize: 16, color: c.ink, marginBottom: 8 },
   detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },

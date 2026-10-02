@@ -21,6 +21,7 @@ import {
   moveStartPlan,
   moveTodoStartPlan,
   notStartedPlan,
+  habitHistory,
   habitSearchFrom,
   placeHabits,
   relayout,
@@ -104,6 +105,28 @@ test('Habits on an upcoming day fill gaps from 3pm; on today from the next quart
   assert.deepEqual(fmt(saturday.map((p) => ({ ...p, id: p.habitId }))), ['skool@16:00-16:15', 'linkedin@16:15-16:30'])
   // A past day gets none
   assert.equal(habitSearchFrom('2026-09-30', DAY, at(18, 6)), null)
+})
+
+test('habitHistory lists each day from the first through today, newest first', () => {
+  const rows = [
+    { logical_day: '2026-09-29', done: true },
+    { logical_day: '2026-10-01', done: false },
+    { logical_day: '2026-10-02', done: true },
+    { logical_day: '2026-10-03', done: false }, // upcoming, left off
+  ]
+  assert.deepEqual(habitHistory(rows, '2026-10-02'), [
+    { day: '2026-10-02', status: 'done' },
+    { day: '2026-10-01', status: 'missed' },
+    { day: '2026-09-30', status: 'missed' }, // never placed, counts as not done
+    { day: '2026-09-29', status: 'done' },
+  ])
+})
+
+test('habitHistory marks today as pending until it is done', () => {
+  assert.deepEqual(habitHistory([{ logical_day: '2026-10-02', done: false }], '2026-10-02'), [
+    { day: '2026-10-02', status: 'pending' },
+  ])
+  assert.deepEqual(habitHistory([], '2026-10-02'), [])
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

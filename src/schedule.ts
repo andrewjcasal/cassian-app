@@ -182,6 +182,22 @@ export function habitSearchFrom(day: string, today: string, now: number) {
   return day === today ? nextQuarter(now) : FILL_FROM_HOUR
 }
 
+// A habit's history, one row per day from its first block through today, newest
+// first. A day the app never placed it counts as not done; today is pending until
+// it's done; upcoming days are left off.
+export function habitHistory(rows: { logical_day: string; done: boolean }[], today: string) {
+  const doneByDay = new Map<string, boolean>()
+  for (const r of rows) if (r.logical_day <= today) doneByDay.set(r.logical_day, (doneByDay.get(r.logical_day) ?? false) || r.done)
+  const days = [...doneByDay.keys()].sort()
+  if (!days.length) return []
+  const out: { day: string; status: 'done' | 'missed' | 'pending' }[] = []
+  for (let d = today; d >= days[0]; d = shiftDay(d, -1)) {
+    const done = doneByDay.get(d) ?? false
+    out.push({ day: d, status: done ? 'done' : d === today ? 'pending' : 'missed' })
+  }
+  return out
+}
+
 // Every habit without a block on the day yet goes into the first gap that fits
 // it, looking from `from`. Each placement counts as taken for the next.
 export function placeHabits(
