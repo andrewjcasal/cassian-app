@@ -457,9 +457,11 @@ function DayPage() {
 
   return (
     <View style={styles.screen}>
-      {tab === 'habits' ? (
-        <HabitsScreen today={today} onSettings={setSettingsMenu} />
-      ) : tab === 'planning' ? (
+      {/* Habits stays mounted (hidden on other tabs) so it's loaded before you open it */}
+      <View style={tab === 'habits' ? styles.screenFill : styles.hidden}>
+        <HabitsScreen active={tab === 'habits'} today={today} onSettings={setSettingsMenu} />
+      </View>
+      {tab === 'habits' ? null : tab === 'planning' ? (
         <PlanningScreen onSettings={setSettingsMenu} />
       ) : (
       <ScrollView
@@ -640,9 +642,12 @@ function PlanningScreen({ onSettings }: { onSettings: (at: { x: number; y: numbe
 }
 
 function HabitsScreen({
+  active,
   today,
   onSettings,
 }: {
+  // Whether the Habits tab is showing; opening it refreshes in the background
+  active: boolean
   today: string
   onSettings: (at: { x: number; y: number }) => void
 }) {
@@ -653,7 +658,10 @@ function HabitsScreen({
   // moment its card opens
   const [blocksByHabit, setBlocksByHabit] = useState<Map<string, HabitBlock[]>>(new Map())
 
+  // Loads when the app starts and again each time the tab opens, keeping what's
+  // already on screen until the fresh copy arrives
   useEffect(() => {
+    if (!active && habits.length) return
     Promise.all([
       supabase.from('cass_habits').select('id,title,minutes,frequency,weekday').order('sort_order'),
       supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done').not('habit_id', 'is', null),
@@ -668,7 +676,8 @@ function HabitsScreen({
       }
       setBlocksByHabit(byHabit)
     })
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
 
   // Saves daily/weekly and the weekday. Unfinished blocks after today are cleared
   // so they get placed again on the right days as those days are opened.
@@ -1193,6 +1202,8 @@ function DayGrid({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: c.bg },
+  screenFill: { flex: 1 },
+  hidden: { display: 'none' },
   page: { padding: 12, paddingBottom: 40 },
   signIn: { flex: 1, padding: 16, justifyContent: 'center', gap: 10 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
