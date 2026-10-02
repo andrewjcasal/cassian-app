@@ -55,6 +55,7 @@ import {
   moveStartPlan,
   moveTodoStartPlan,
   notStartedPlan,
+  habitSearchFrom,
   placeHabits,
   relayout,
   resizeItemPlan,
@@ -239,7 +240,9 @@ function DayPage() {
     async (current: CalItem[]) => {
       const { data: habits, error } = await supabase.from('cass_habits').select('id,title,minutes').order('sort_order')
       if (error) return setError(error.message), false
-      const placements = placeHabits(current, habits ?? [], nowHours())
+      const from = habitSearchFrom(day, today, nowHours())
+      if (from === null) return false
+      const placements = placeHabits(current, habits ?? [], from)
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
           {
@@ -255,7 +258,7 @@ function DayPage() {
       }
       return placements.length > 0
     },
-    [day],
+    [day, today],
   )
 
   const load = useCallback(async () => {
@@ -272,7 +275,7 @@ function DayPage() {
     if (todoRes.error) setError(todoRes.error.message)
     let current = await fetchItems()
     if (run !== latestLoad.current) return
-    if (day === today && (await placeHabitBlocks(current))) current = await fetchItems()
+    if (day >= today && (await placeHabitBlocks(current))) current = await fetchItems()
     if (run !== latestLoad.current) return
     setLoaded({ day, items: current })
     setTodos(

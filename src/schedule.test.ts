@@ -21,6 +21,7 @@ import {
   moveStartPlan,
   moveTodoStartPlan,
   notStartedPlan,
+  habitSearchFrom,
   placeHabits,
   relayout,
   resizeItemPlan,
@@ -81,15 +82,28 @@ test('placeHabits fills gaps from now and skips habits already placed', () => {
     { id: 'skool', title: 'Skool replies', minutes: 15 },
     { id: 'linkedin', title: 'LinkedIn replies', minutes: 15 },
   ]
-  assert.deepEqual(fmt(placeHabits(items, habits, at(18, 6)).map((p) => ({ ...p, id: p.habitId }))), [
+  assert.deepEqual(fmt(placeHabits(items, habits, habitSearchFrom(DAY, DAY, at(18, 6))!).map((p) => ({ ...p, id: p.habitId }))), [
     'skool@20:30-20:45',
     'linkedin@20:45-21:00',
   ])
   const withSkool = [...items, block('s', at(20, 30), at(20, 45), { habitId: 'skool', source: 'habit' })]
   assert.deepEqual(
-    placeHabits(withSkool, habits, at(18, 6)).map((p) => p.habitId),
+    placeHabits(withSkool, habits, habitSearchFrom(DAY, DAY, at(18, 6))!).map((p) => p.habitId),
     ['linkedin'],
   )
+})
+
+test('Habits on an upcoming day fill gaps from 3pm; on today from the next quarter hour', () => {
+  const habits = [
+    { id: 'skool', title: 'Skool replies', minutes: 15 },
+    { id: 'linkedin', title: 'LinkedIn replies', minutes: 15 },
+  ]
+  assert.equal(habitSearchFrom(DAY, DAY, at(18, 6)), at(18, 15))
+  assert.equal(habitSearchFrom('2026-10-03', DAY, at(18, 6)), 15)
+  const saturday = placeHabits([block('a', 15, 16)], habits, habitSearchFrom('2026-10-03', DAY, at(18, 6))!)
+  assert.deepEqual(fmt(saturday.map((p) => ({ ...p, id: p.habitId }))), ['skool@16:00-16:15', 'linkedin@16:15-16:30'])
+  // A past day gets none
+  assert.equal(habitSearchFrom('2026-09-30', DAY, at(18, 6)), null)
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

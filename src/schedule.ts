@@ -175,12 +175,19 @@ export function newBlockStart(items: CalItem[], length: number, isToday: boolean
   return freeSlot(items, from, length)
 }
 
-// Today, every habit without a block yet goes into the first gap that fits it,
-// starting from the next quarter hour. Each placement counts as taken for the next.
+// Where habits start looking for a gap: today from the next quarter hour, an
+// upcoming day from 3pm (like new todos). A past day gets no habits (null).
+export function habitSearchFrom(day: string, today: string, now: number) {
+  if (day < today) return null
+  return day === today ? nextQuarter(now) : FILL_FROM_HOUR
+}
+
+// Every habit without a block on the day yet goes into the first gap that fits
+// it, looking from `from`. Each placement counts as taken for the next.
 export function placeHabits(
   items: CalItem[],
   habits: { id: string; title: string; minutes: number }[],
-  now: number,
+  from: number,
 ) {
   const placed = new Set(items.map((it) => it.habitId).filter(Boolean))
   const occupied = [...items]
@@ -188,7 +195,7 @@ export function placeHabits(
   for (const h of habits) {
     if (placed.has(h.id)) continue
     const length = h.minutes / 60
-    const start = freeSlot(occupied, nextQuarter(now), length)
+    const start = freeSlot(occupied, from, length)
     if (start === null) continue
     out.push({ habitId: h.id, title: h.title, start, end: start + length })
     occupied.push({ id: h.id, title: h.title, start, end: start + length, kind: 'block', done: false, habitId: h.id })
