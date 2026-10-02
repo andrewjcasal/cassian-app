@@ -225,18 +225,9 @@ export function notStartedPlan(
 // blocks are pushed only as far as needed to stop overlapping, so a block after a
 // gap stays put. Shorter: only the back to back run right after it moves up.
 function followOn(later: Move[], oldEnd: number, newEnd: number): Move[] {
+  if (newEnd > oldEnd) return pushFrom(later, newEnd)
   const sorted = [...later].sort((a, b) => a.start - b.start)
   const moves: Move[] = []
-  if (newEnd > oldEnd) {
-    let cursor = newEnd
-    for (const it of sorted) {
-      if (it.start >= cursor - EPS) break
-      const length = it.end - it.start
-      moves.push({ ...it, start: cursor, end: cursor + length })
-      cursor += length
-    }
-    return moves
-  }
   const delta = newEnd - oldEnd
   let cursor = oldEnd
   for (const it of sorted) {
@@ -245,6 +236,44 @@ function followOn(later: Move[], oldEnd: number, newEnd: number): Move[] {
     cursor = it.end
   }
   return moves
+}
+
+// Pushes blocks that start before `end` to follow on from it, back to back,
+// stopping at the first block that already clears it.
+function pushFrom(later: Move[], end: number): Move[] {
+  const moves: Move[] = []
+  let cursor = end
+  for (const it of [...later].sort((a, b) => a.start - b.start)) {
+    if (it.start >= cursor - EPS) break
+    const length = it.end - it.start
+    moves.push({ ...it, start: cursor, end: cursor + length })
+    cursor += length
+  }
+  return moves
+}
+
+// A block moved to start at `newStart`, same length. Blocks it now overlaps from
+// there on are pushed along after it; blocks before it, and blocks after a gap,
+// stay put.
+function moveWith(target: Move, others: Move[], newStart: number): { moves: Move[] } | { error: string } {
+  if (Math.abs(newStart - target.start) < EPS) return { moves: [] }
+  const length = target.end - target.start
+  const moved = { ...target, start: newStart, end: newStart + length }
+  const moves = [moved, ...pushFrom(others.filter((o) => o.start >= newStart - EPS), moved.end)]
+  if (Math.max(...moves.map((m) => m.end)) > 24 + EPS) return { error: 'That runs past midnight' }
+  return { moves }
+}
+
+export function moveStartPlan(items: CalItem[], item: CalItem, newStart: number) {
+  const others = carried(items, item, 0).map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
+  return moveWith({ id: item.id, kind: item.kind, start: item.start, end: item.end }, others, newStart)
+}
+
+export function moveTodoStartPlan(todos: Todo[], todo: Todo, newStart: number) {
+  const others = todos
+    .filter((t) => t.day === todo.day && t.id !== todo.id)
+    .map((t): Move => ({ id: t.id, kind: 'block', start: t.start, end: t.end }))
+  return moveWith({ id: todo.id, kind: 'block', start: todo.start, end: todo.end }, others, newStart)
 }
 
 function resizeWith(target: Move, later: Move[], minutes: number): { moves: Move[] } | { error: string } {

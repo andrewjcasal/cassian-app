@@ -14,6 +14,8 @@ import {
   halfSides,
   isDoneEarly,
   menuOptions,
+  moveStartPlan,
+  moveTodoStartPlan,
   notStartedPlan,
   placeHabits,
   relayout,
@@ -263,6 +265,39 @@ test('Todos tab resize follows the same push and pull rules', () => {
   const shorter = resizePlan(todos, a, 30)
   if (!('moves' in shorter)) throw new Error(shorter.error)
   assert.deepEqual(fmt(shorter.moves), ['a@18:00-18:30', 'b@18:30-19:30'])
+})
+
+test('Moving a block later keeps its length and pushes only the blocks it now overlaps', () => {
+  const washer = block('washer', at(22, 42), at(23, 42))
+  const items = [block('linkedin', 20, 21, { done: true }), washer]
+  const plan = moveStartPlan(items, washer, at(22, 12))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['washer@22:12-23:12'])
+
+  const a = block('a', 18, 19)
+  const chain = [a, block('b', 19, 20), block('c', 20, 21), block('d', 23, 24)]
+  const later = moveStartPlan(chain, a, at(18, 30))
+  if (!('moves' in later)) throw new Error(later.error)
+  assert.deepEqual(fmt(later.moves), ['a@18:30-19:30', 'b@19:30-20:30', 'c@20:30-21:30'])
+})
+
+test('Moving a block earlier moves only that block', () => {
+  const b = block('b', 20, 21)
+  const plan = moveStartPlan([block('a', 18, 19), b, block('c', 21, 22)], b, at(18, 30))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['b@18:30-19:30'])
+})
+
+test('Moving a block refuses to run past midnight', () => {
+  const a = block('a', 20, 21)
+  assert.ok('error' in moveStartPlan([a], a, at(23, 30)))
+})
+
+test('Moving a todo from the Todos tab follows the same rules', () => {
+  const a = todo('a', 18, 19)
+  const plan = moveTodoStartPlan([a, todo('b', 19, 20), todo('c', 22, 23)], a, at(18, 30))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['a@18:30-19:30', 'b@19:30-20:30'])
 })
 
 test('relayout re-packs the swapped range back to back', () => {

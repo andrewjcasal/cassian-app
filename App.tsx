@@ -35,6 +35,8 @@ import {
   hoursOf,
   isDoneEarly,
   menuOptions,
+  moveStartPlan,
+  moveTodoStartPlan,
   notStartedPlan,
   placeHabits,
   relayout,
@@ -326,6 +328,23 @@ function DayPage() {
     setDetail({ ...d, end: d.start + minutes / 60 })
   }
 
+  // The card's start slider moves the block, same length
+  const moveDetail = async (d: Detail, start: number) => {
+    let plan
+    if (d.from === 'todo') {
+      const todo = todos.find((t) => t.id === d.id)
+      if (!todo) return setError('That todo changed; close the card and open it again')
+      plan = moveTodoStartPlan(todos, todo, start)
+    } else {
+      const item = items.find((it) => it.id === d.id)
+      if (!item) return setError('That block changed; close the card and open it again')
+      plan = moveStartPlan(items, item, start)
+    }
+    if ('error' in plan) return setError(plan.error)
+    if (plan.moves.length) await saveMoves(plan.moves)
+    setDetail({ ...d, start, end: start + (d.end - d.start) })
+  }
+
   const setMinutes = async (todo: Todo, minutes: number) => {
     const plan = resizePlan(todos, todo, minutes)
     if ('error' in plan) return setError(plan.error)
@@ -449,7 +468,7 @@ function DayPage() {
       <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={() => setDetail(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setDetail(null)}>
           {detail ? (
-            <DetailCard detail={detail} today={today} onResize={resizeDetail} />
+            <DetailCard detail={detail} today={today} onResize={resizeDetail} onMove={moveDetail} />
           ) : null}
         </Pressable>
       </Modal>
@@ -528,19 +547,30 @@ function HabitsScreen({ onBack }: { onBack: () => void }) {
 // Slider steps for a block's length, in minutes
 const SLIDER_STEP = 5
 const SLIDER_MAX = 240
+// How far the start slider reaches either side of the current start, in minutes
+const START_SLIDER_RANGE = 120
 
 function DetailCard({
   detail,
   today,
   onResize,
+  onMove,
 }: {
   detail: Detail
   today: string
   onResize: (detail: Detail, minutes: number) => void
+  onMove: (detail: Detail, start: number) => void
 }) {
   const saved = Math.round((detail.end - detail.start) * 60)
+  const savedStart = Math.round(detail.start * 60)
   const [minutes, setMinutes] = useState(saved)
+  // The start slider is an offset from the saved start, so it opens centered and
+  // snaps back to the middle after each move
+  const [offset, setOffset] = useState(0)
   useEffect(() => setMinutes(saved), [saved])
+  useEffect(() => setOffset(0), [savedStart])
+  const startMin = Math.min(Math.max(savedStart + offset, 0), 24 * 60 - minutes)
+  const start = startMin / 60
 
   return (
     // Swallows taps so only the backdrop closes the card
@@ -548,9 +578,27 @@ function DetailCard({
       <Text style={styles.detailTitle}>{detail.title}</Text>
       {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
       <Text style={styles.detailTimes}>
-        {clock(detail.start)} – {clock(detail.start + minutes / 60)}
+        {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
       </Text>
-      <Text style={styles.detailDuration}>{minutes} min</Text>
+
+      <Text style={styles.sliderLabel}>Start</Text>
+      <Slider
+        value={offset}
+        minimumValue={-START_SLIDER_RANGE}
+        maximumValue={START_SLIDER_RANGE}
+        step={SLIDER_STEP}
+        minimumTrackTintColor={c.line}
+        maximumTrackTintColor={c.line}
+        thumbTintColor={c.accent}
+        onValueChange={(v) => setOffset(Math.round(v))}
+        onSlidingComplete={() => {
+          if (startMin !== savedStart) onMove(detail, startMin / 60)
+          else setOffset(0)
+        }}
+        accessibilityLabel="Move the start time earlier or later"
+      />
+
+      <Text style={styles.sliderLabel}>Duration</Text>
       <Slider
         value={minutes}
         minimumValue={SLIDER_STEP}
@@ -564,7 +612,7 @@ function DetailCard({
           const next = Math.round(v)
           if (next !== saved) onResize(detail, next)
         }}
-        accessibilityLabel="Length in minutes"
+        accessibilityLabel="Duration in minutes"
       />
     </Pressable>
   )
@@ -898,8 +946,8 @@ const styles = StyleSheet.create({
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
   detailDay: { fontSize: 14, color: c.muted },
-  detailTimes: { fontSize: 18, color: c.ink, fontWeight: '600' },
-  detailDuration: { fontSize: 14, color: c.muted },
+  detailTimes: { fontSize: 16, color: c.ink },
+  sliderLabel: { fontSize: 13, fontWeight: '600', color: c.muted, marginTop: 4 },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
