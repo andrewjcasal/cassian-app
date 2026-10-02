@@ -204,7 +204,9 @@ function DayPage() {
   }, [day])
 
   // Today, every habit without a block yet goes into the first gap that fits it.
-  // The (habit_id, day) unique index keeps a racing load from placing one twice.
+  // The (habit_id, logical_day) unique index keeps a racing load from placing one
+  // twice; logical_day is the 6am to 6am day, so a habit after midnight still counts
+  // for the night before.
   const placeHabitBlocks = useCallback(
     async (current: CalItem[]) => {
       const { data: habits, error } = await supabase.from('cass_habits').select('id,title,minutes').order('sort_order')
@@ -219,7 +221,7 @@ function DayPage() {
             source: 'habit',
             habit_id: p.habitId,
           },
-          { onConflict: 'habit_id,day', ignoreDuplicates: true },
+          { onConflict: 'habit_id,logical_day', ignoreDuplicates: true },
         )
         if (insertError) return setError(insertError.message), true
       }
