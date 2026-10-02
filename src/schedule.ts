@@ -221,29 +221,53 @@ export function notStartedPlan(
   return { moves }
 }
 
-// The same for a block on the calendar: a new length moves its end, and the
-// todos and habits after it shift by the same amount.
-export function resizeItemPlan(items: CalItem[], item: CalItem, minutes: number): { moves: Move[] } | { error: string } {
-  const delta = item.start + minutes / 60 - item.end
-  if (Math.abs(delta) < EPS) return { moves: [] }
-  const later = carried(items, item, item.end)
-  if (Math.max(item.end, ...later.map((it) => it.end)) + delta > 24 + EPS) return { error: 'That runs past midnight' }
-  return { moves: [{ id: item.id, kind: item.kind, start: item.start, end: item.end + delta }, ...later.map((it) => shift(it, delta))] }
+// What happens after a block's end moves from `oldEnd` to `newEnd`. Longer: later
+// blocks are pushed only as far as needed to stop overlapping, so a block after a
+// gap stays put. Shorter: only the back to back run right after it moves up.
+function followOn(later: Move[], oldEnd: number, newEnd: number): Move[] {
+  const sorted = [...later].sort((a, b) => a.start - b.start)
+  const moves: Move[] = []
+  if (newEnd > oldEnd) {
+    let cursor = newEnd
+    for (const it of sorted) {
+      if (it.start >= cursor - EPS) break
+      const length = it.end - it.start
+      moves.push({ ...it, start: cursor, end: cursor + length })
+      cursor += length
+    }
+    return moves
+  }
+  const delta = newEnd - oldEnd
+  let cursor = oldEnd
+  for (const it of sorted) {
+    if (Math.abs(it.start - cursor) > EPS) break
+    moves.push(shift(it, delta))
+    cursor = it.end
+  }
+  return moves
 }
 
-// A new length moves this todo's end, and the same day's later todos shift by the
-// same amount so the chain stays back to back.
+function resizeWith(target: Move, later: Move[], minutes: number): { moves: Move[] } | { error: string } {
+  const newEnd = target.start + minutes / 60
+  if (Math.abs(newEnd - target.end) < EPS) return { moves: [] }
+  const moves = [{ ...target, end: newEnd }, ...followOn(later, target.end, newEnd)]
+  if (Math.max(...moves.map((m) => m.end)) > 24 + EPS) return { error: 'That runs past midnight' }
+  return { moves }
+}
+
+// A new length for a block on the calendar. The todos and habits after it follow
+// the push and pull rules above.
+export function resizeItemPlan(items: CalItem[], item: CalItem, minutes: number): { moves: Move[] } | { error: string } {
+  const later = carried(items, item, item.end).map((it) => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
+  return resizeWith({ id: item.id, kind: item.kind, start: item.start, end: item.end }, later, minutes)
+}
+
+// The same from the Todos tab, against that day's todos.
 export function resizePlan(todos: Todo[], todo: Todo, minutes: number): { moves: Move[] } | { error: string } {
-  const delta = todo.start + minutes / 60 - todo.end
-  if (Math.abs(delta) < EPS) return { moves: [] }
-  const later = todos.filter((t) => t.day === todo.day && t.id !== todo.id && t.start >= todo.end - EPS)
-  if (Math.max(todo.end, ...later.map((t) => t.end)) + delta > 24 + EPS) return { error: 'That runs past midnight' }
-  return {
-    moves: [
-      { id: todo.id, kind: 'block', start: todo.start, end: todo.end + delta },
-      ...later.map((t) => shift({ ...t, kind: 'block' }, delta)),
-    ],
-  }
+  const later = todos
+    .filter((t) => t.day === todo.day && t.id !== todo.id && t.start >= todo.end - EPS)
+    .map((t): Move => ({ id: t.id, kind: 'block', start: t.start, end: t.end }))
+  return resizeWith({ id: todo.id, kind: 'block', start: todo.start, end: todo.end }, later, minutes)
 }
 
 // After a drag, the todos whose order changed, per day, laid back to back from

@@ -230,6 +230,41 @@ test('resizeItemPlan changes a block length and shifts the todos and habits afte
   assert.ok('error' in resizeItemPlan(items, washer, 120))
 })
 
+test('Lengthening pushes later blocks only as far as needed, so a block after a gap stays put', () => {
+  const linkedin = block('linkedin', at(19, 56), at(20, 41), { done: true, source: 'habit', habitId: 'h2' })
+  const items = [linkedin, block('washer', at(22, 42), at(23, 42))]
+  const plan = resizeItemPlan(items, linkedin, 80)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['linkedin@19:56-21:16'])
+})
+
+test('Lengthening into a back to back run pushes the run along, stopping at the first gap', () => {
+  const a = block('a', 18, 19)
+  const items = [a, block('b', 19, 20), block('c', 20, 21), block('d', 22, 23)]
+  const plan = resizeItemPlan(items, a, 90)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['a@18:00-19:30', 'b@19:30-20:30', 'c@20:30-21:30'])
+})
+
+test('Shortening pulls up only the back to back run after it', () => {
+  const a = block('a', 18, 19)
+  const items = [a, block('b', 19, 20), block('c', 21, 22)]
+  const plan = resizeItemPlan(items, a, 30)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['a@18:00-18:30', 'b@18:30-19:30'])
+})
+
+test('Todos tab resize follows the same push and pull rules', () => {
+  const a = todo('a', 18, 19)
+  const todos = [a, todo('b', 19, 20), todo('c', 22, 23)]
+  const longer = resizePlan(todos, a, 90)
+  if (!('moves' in longer)) throw new Error(longer.error)
+  assert.deepEqual(fmt(longer.moves), ['a@18:00-19:30', 'b@19:30-20:30'])
+  const shorter = resizePlan(todos, a, 30)
+  if (!('moves' in shorter)) throw new Error(shorter.error)
+  assert.deepEqual(fmt(shorter.moves), ['a@18:00-18:30', 'b@18:30-19:30'])
+})
+
 test('relayout re-packs the swapped range back to back', () => {
   const washer = todo('washer', at(19, 15), at(20, 15))
   const followup = todo('followup', at(20, 15), at(20, 45))
