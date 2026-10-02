@@ -182,6 +182,18 @@ export function habitSearchFrom(day: string, today: string, now: number) {
   return day === today ? nextQuarter(now) : FILL_FROM_HOUR
 }
 
+// 0 = Sunday ... 6 = Saturday for a "YYYY-MM-DD" day
+export function weekdayOf(day: string) {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d).getDay()
+}
+
+// The habits that land on a day: daily ones every day, weekly ones only on
+// their weekday (and not at all until a weekday is picked).
+export function habitsForDay<H extends { frequency: 'daily' | 'weekly'; weekday: number | null }>(habits: H[], day: string) {
+  return habits.filter((h) => h.frequency === 'daily' || (h.weekday !== null && h.weekday === weekdayOf(day)))
+}
+
 // A habit's history, one row per day from its first block through today, newest
 // first. A done day carries when it started and how long it took. A day the app
 // never placed it counts as not done; today is pending until it's done; upcoming
@@ -193,6 +205,8 @@ export type HabitDay =
 export function habitHistory(
   rows: { logical_day: string; done: boolean; start: number; end: number }[],
   today: string,
+  // A weekly habit's weekday (0 = Sunday): only those days are listed
+  weekday: number | null = null,
 ): HabitDay[] {
   const byDay = new Map<string, { start: number; end: number } | null>()
   for (const r of rows) {
@@ -205,6 +219,7 @@ export function habitHistory(
   if (!days.length) return []
   const out: HabitDay[] = []
   for (let d = today; d >= days[0]; d = shiftDay(d, -1)) {
+    if (weekday !== null && weekdayOf(d) !== weekday) continue
     const done = byDay.get(d)
     if (done) out.push({ day: d, status: 'done', start: done.start, minutes: Math.round((done.end - done.start) * 60) })
     else out.push({ day: d, status: d === today ? 'pending' : 'missed' })

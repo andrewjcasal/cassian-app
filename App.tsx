@@ -59,6 +59,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   habitHistory,
+  habitsForDay,
   habitSearchFrom,
   placeHabits,
   relayout,
@@ -244,11 +245,14 @@ function DayPage() {
   // for the night before.
   const placeHabitBlocks = useCallback(
     async (current: CalItem[]) => {
-      const { data: habits, error } = await supabase.from('cass_habits').select('id,title,minutes').order('sort_order')
+      const { data: habits, error } = await supabase
+        .from('cass_habits')
+        .select('id,title,minutes,frequency,weekday')
+        .order('sort_order')
       if (error) return setError(error.message), false
       const from = habitSearchFrom(day, today, nowHours())
       if (from === null) return false
-      const placements = placeHabits(current, habits ?? [], from)
+      const placements = placeHabits(current, habitsForDay(habits ?? [], day), from)
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
           {
@@ -588,7 +592,10 @@ function DayPage() {
   )
 }
 
-type Habit = { id: string; title: string; minutes: number }
+type Habit = { id: string; title: string; minutes: number; frequency: 'daily' | 'weekly'; weekday: number | null }
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const WEEKDAY_NAMES = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays']
 
 const TABS = [
   { key: 'todos', label: 'Todos', Icon: ListTodo },
@@ -643,7 +650,7 @@ function HabitsScreen({
   useEffect(() => {
     supabase
       .from('cass_habits')
-      .select('id,title,minutes')
+      .select('id,title,minutes,frequency,weekday')
       .order('sort_order')
       .then(({ data, error }) => {
         if (error) setError(error.message)
@@ -651,23 +658,60 @@ function HabitsScreen({
       })
   }, [])
 
+  // Saves daily/weekly and the weekday. Unfinished blocks after today are cleared
+  // so they get placed again on the right days as those days are opened.
+  const changeSchedule = async (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => {
+    const next = { ...habit, frequency, weekday: frequency === 'daily' ? null : weekday }
+    setHabits((list) => list.map((h) => (h.id === habit.id ? next : h)))
+    setSelected(next)
+    const { error } = await supabase
+      .from('cass_habits')
+      .update({ frequency: next.frequency, weekday: next.weekday })
+      .eq('id', habit.id)
+    if (error) return setError(error.message)
+    const cleared = await supabase
+      .from('cass_time_blocks')
+      .delete()
+      .eq('habit_id', habit.id)
+      .eq('done', false)
+      .gt('logical_day', today)
+    if (cleared.error) setError(cleared.error.message)
+  }
+
+  const sections = [
+    { title: 'DAILY', list: habits.filter((h) => h.frequency === 'daily') },
+    { title: 'WEEKLY', list: habits.filter((h) => h.frequency === 'weekly') },
+  ]
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <ScreenHeader title="Habits" onSettings={onSettings} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <View style={styles.card}>
-        {habits.map((h) => (
-          <Pressable key={h.id} style={styles.todoRow} onPress={() => setSelected(h)}>
-            <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
-            <Text style={styles.minutesLabel}>{h.minutes} min</Text>
-            <ChevronRight size={18} color={c.muted} />
-          </Pressable>
-        ))}
-      </View>
+      {sections.map(({ title, list }) => (
+        <View key={title}>
+          <Text style={styles.sectionLabel}>{title}</Text>
+          <View style={styles.card}>
+            {list.length ? (
+              list.map((h) => (
+                <Pressable key={h.id} style={styles.todoRow} onPress={() => setSelected(h)}>
+                  <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
+                  {h.frequency === 'weekly' ? (
+                    <Text style={styles.minutesLabel}>{h.weekday === null ? 'Pick a day' : WEEKDAY_NAMES[h.weekday]}</Text>
+                  ) : null}
+                  <Text style={styles.minutesLabel}>{h.minutes} min</Text>
+                  <ChevronRight size={18} color={c.muted} />
+                </Pressable>
+              ))
+            ) : (
+              <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text>
+            )}
+          </View>
+        </View>
+      ))}
 
       <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setSelected(null)}>
-          {selected ? <HabitHistory habit={selected} today={today} /> : null}
+          {selected ? <HabitHistory habit={selected} today={today} onSchedule={changeSchedule} /> : null}
         </Pressable>
       </Modal>
     </ScrollView>
@@ -675,7 +719,15 @@ function HabitsScreen({
 }
 
 // Each day's done or not done for one habit (habitHistory in src/schedule.ts)
-function HabitHistory({ habit, today }: { habit: Habit; today: string }) {
+function HabitHistory({
+  habit,
+  today,
+  onSchedule,
+}: {
+  habit: Habit
+  today: string
+  onSchedule: (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => void
+}) {
   const [rows, setRows] = useState<ReturnType<typeof habitHistory> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -687,9 +739,9 @@ function HabitHistory({ habit, today }: { habit: Habit; today: string }) {
       .then(({ data, error }) => {
         if (error) setError(error.message)
         const withTimes = (data ?? []).map((b) => ({ ...b, ...fromStored(b.day, b.start_time, b.end_time) }))
-        setRows(habitHistory(withTimes, today))
+        setRows(habitHistory(withTimes, today, habit.frequency === 'weekly' ? habit.weekday : null))
       })
-  }, [habit.id, today])
+  }, [habit.id, habit.frequency, habit.weekday, today])
 
   const past = (rows ?? []).filter((r) => r.status !== 'pending')
   const doneCount = past.filter((r) => r.status === 'done').length
@@ -698,6 +750,46 @@ function HabitHistory({ habit, today }: { habit: Habit; today: string }) {
     // Swallows taps so only the backdrop closes the card
     <Pressable style={[styles.detailCard, styles.historyCard]} onPress={() => {}}>
       <Text style={styles.detailTitle}>{habit.title}</Text>
+      <View style={styles.segment}>
+        {(['daily', 'weekly'] as const).map((f) => {
+          const active = habit.frequency === f
+          return (
+            <Pressable
+              key={f}
+              style={[styles.segmentItem, active && styles.segmentItemActive]}
+              onPress={() => !active && onSchedule(habit, f, habit.weekday)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                {f === 'daily' ? 'Daily' : 'Weekly'}
+              </Text>
+            </Pressable>
+          )
+        })}
+      </View>
+      {habit.frequency === 'weekly' ? (
+        <>
+          <Text style={styles.historySummary}>Which day?</Text>
+          <View style={styles.weekdays}>
+            {WEEKDAYS.map((label, i) => {
+              const active = habit.weekday === i
+              return (
+                <Pressable
+                  key={label}
+                  style={[styles.weekday, active && styles.segmentItemActive]}
+                  onPress={() => !active && onSchedule(habit, 'weekly', i)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={WEEKDAY_NAMES[i]}
+                >
+                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{label}</Text>
+                </Pressable>
+              )
+            })}
+          </View>
+        </>
+      ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {rows && rows.length ? (
         <>
@@ -1159,6 +1251,15 @@ const styles = StyleSheet.create({
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   historySummary: { fontSize: 16, color: c.ink },
   historyCard: { maxHeight: '80%' },
+  sectionLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8, color: c.ink, marginTop: 8, marginBottom: 6 },
+  emptySection: { paddingVertical: 8, paddingHorizontal: 8 },
+  segment: { flexDirection: 'row', borderRadius: 8, borderWidth: 1, borderColor: c.line, overflow: 'hidden' },
+  segmentItem: { flex: 1, alignItems: 'center', paddingVertical: 8 },
+  segmentItemActive: { backgroundColor: c.accent },
+  segmentText: { fontSize: 14, fontWeight: '600', color: c.ink },
+  segmentTextActive: { color: '#ffffff' },
+  weekdays: { flexDirection: 'row', gap: 4 },
+  weekday: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: c.line },
   historyList: { flexGrow: 0 },
   detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },

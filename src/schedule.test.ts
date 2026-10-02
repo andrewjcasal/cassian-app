@@ -22,6 +22,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   habitHistory,
+  habitsForDay,
   habitSearchFrom,
   placeHabits,
   relayout,
@@ -127,6 +128,29 @@ test('habitHistory marks today as pending until it is done', () => {
     { day: '2026-10-02', status: 'pending' },
   ])
   assert.deepEqual(habitHistory([], '2026-10-02'), [])
+})
+
+test('habitsForDay: daily habits every day, weekly habits only on their weekday', () => {
+  const habits = [
+    { id: 'skool', frequency: 'daily' as const, weekday: null },
+    { id: 'plan', frequency: 'weekly' as const, weekday: 6 }, // Saturday
+    { id: 'unset', frequency: 'weekly' as const, weekday: null }, // no day picked yet
+  ]
+  // 2026-10-03 is a Saturday, 2026-10-02 a Friday
+  assert.deepEqual(habitsForDay(habits, '2026-10-03').map((h) => h.id), ['skool', 'plan'])
+  assert.deepEqual(habitsForDay(habits, '2026-10-02').map((h) => h.id), ['skool'])
+})
+
+test('habitHistory for a weekly habit counts only its weekday', () => {
+  const rows = [
+    { logical_day: '2026-09-19', done: true, start: 10, end: 11 },
+    { logical_day: '2026-10-03', done: false, start: 15, end: 16 },
+  ]
+  // Saturdays only: 9/19 done, 9/26 never placed (missed), 10/3 today pending
+  assert.deepEqual(
+    habitHistory(rows, '2026-10-03', 6).map((r) => `${r.day} ${r.status}`),
+    ['2026-10-03 pending', '2026-09-26 missed', '2026-09-19 done'],
+  )
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
