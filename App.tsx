@@ -21,8 +21,6 @@ import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import {
   CalendarDays,
-  Circle,
-  CircleCheck,
   ChevronLeft,
   ChevronRight,
   GripVertical,
@@ -42,10 +40,12 @@ import {
   type Status,
   type Todo,
   clock,
+  doneAtEnd,
   donePlan,
   durationOptions,
   newBlockStart,
   halfSides,
+  DAY_END,
   DAY_START,
   fromStored,
   logicalNow,
@@ -173,7 +173,15 @@ type Tab = 'todos' | 'agenda' | 'habits' | 'planning'
 type Menu = { item: CalItem; x: number; y: number }
 // What the tap-to-open card shows. It keeps only the id, and a new length is
 // saved against the current todo or block, never a copy from when it opened.
-type Detail = { id: string; from: 'todo' | 'item'; title: string; day: string; start: number; end: number }
+type Detail = {
+  id: string
+  from: 'todo' | 'item'
+  title: string
+  day: string
+  start: number
+  end: number
+  done: boolean
+}
 
 function DayPage() {
   const today = logicalNow(new Date()).day
@@ -388,15 +396,28 @@ function DayPage() {
     if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
   }
 
-  // The circle on a todo marks it done. On the day being shown it follows the same
-  // rules as Done in the block menu; on any other day it just marks it done.
-  const completeTodo = async (todo: Todo) => {
-    const item = todo.day === day ? items.find((it) => it.id === todo.id) : undefined
+  // Done now from the card. On the day being shown it follows the same rules as
+  // Done in the block menu; on any other day it just marks it done.
+  const doneNow = async (d: Detail) => {
+    setDetail(null)
+    const item = d.day === day ? items.find((it) => it.id === d.id) : undefined
     if (item) return setStatus(item, 'done')
     const { error } = await supabase
       .from('cass_time_blocks')
       .update({ done: true, done_at: new Date().toISOString() })
-      .eq('id', todo.id)
+      .eq('id', d.id)
+    if (error) return setError(error.message)
+    load()
+  }
+
+  // Done at its scheduled end from the card: marked done as scheduled, nothing moves
+  const doneAtScheduledEnd = async (d: Detail) => {
+    setDetail(null)
+    const isTask = d.from === 'item' && items.find((it) => it.id === d.id)?.kind === 'task'
+    const { error } = await supabase
+      .from(isTask ? 'cass_tasks' : 'cass_time_blocks')
+      .update(isTask ? { done: true } : doneAtEnd(d.day, d.start, d.end))
+      .eq('id', d.id)
     if (error) return setError(error.message)
     load()
   }
@@ -448,7 +469,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onComplete={completeTodo} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end })} />
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false })} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -469,7 +490,7 @@ function DayPage() {
             items={items}
             showNow={day === today}
             onMore={(item, x, y) => setMenu({ item, x, y })}
-            onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end })}
+            onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done })}
           />
         )}
 
@@ -518,7 +539,14 @@ function DayPage() {
       <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={() => setDetail(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setDetail(null)}>
           {detail ? (
-            <DetailCard detail={detail} today={today} onResize={resizeDetail} onMove={moveDetail} />
+            <DetailCard
+              detail={detail}
+              today={today}
+              onResize={resizeDetail}
+              onMove={moveDetail}
+              onDoneNow={doneNow}
+              onDoneAtEnd={doneAtScheduledEnd}
+            />
           ) : null}
         </Pressable>
       </Modal>
@@ -628,11 +656,15 @@ function DetailCard({
   today,
   onResize,
   onMove,
+  onDoneNow,
+  onDoneAtEnd,
 }: {
   detail: Detail
   today: string
   onResize: (detail: Detail, minutes: number) => void
   onMove: (detail: Detail, start: number) => void
+  onDoneNow: (detail: Detail) => void
+  onDoneAtEnd: (detail: Detail) => void
 }) {
   const saved = Math.round((detail.end - detail.start) * 60)
   const savedStart = Math.round(detail.start * 60)
@@ -642,7 +674,7 @@ function DetailCard({
   const [offset, setOffset] = useState(0)
   useEffect(() => setMinutes(saved), [saved])
   useEffect(() => setOffset(0), [savedStart])
-  const startMin = Math.min(Math.max(savedStart + offset, 0), 24 * 60 - minutes)
+  const startMin = Math.min(Math.max(savedStart + offset, 0), DAY_END * 60 - minutes)
   const start = startMin / 60
 
   return (
@@ -654,39 +686,56 @@ function DetailCard({
         {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
       </Text>
 
-      <Text style={styles.sliderLabel}>Start</Text>
-      <Slider
-        value={offset}
-        minimumValue={-START_SLIDER_RANGE}
-        maximumValue={START_SLIDER_RANGE}
-        step={SLIDER_STEP}
-        minimumTrackTintColor={c.line}
-        maximumTrackTintColor={c.line}
-        thumbTintColor={c.accent}
-        onValueChange={(v) => setOffset(Math.round(v))}
-        onSlidingComplete={() => {
-          if (startMin !== savedStart) onMove(detail, startMin / 60)
-          else setOffset(0)
-        }}
-        accessibilityLabel="Move the start time earlier or later"
-      />
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Start</Text>
+        <Slider
+          style={styles.slider}
+          value={offset}
+          minimumValue={-START_SLIDER_RANGE}
+          maximumValue={START_SLIDER_RANGE}
+          step={SLIDER_STEP}
+          minimumTrackTintColor={c.line}
+          maximumTrackTintColor={c.line}
+          thumbTintColor={c.accent}
+          onValueChange={(v) => setOffset(Math.round(v))}
+          onSlidingComplete={() => {
+            if (startMin !== savedStart) onMove(detail, startMin / 60)
+            else setOffset(0)
+          }}
+          accessibilityLabel="Move the start time earlier or later"
+        />
+      </View>
 
-      <Text style={styles.sliderLabel}>Duration</Text>
-      <Slider
-        value={minutes}
-        minimumValue={SLIDER_STEP}
-        maximumValue={Math.max(SLIDER_MAX, saved)}
-        step={SLIDER_STEP}
-        minimumTrackTintColor={c.accent}
-        maximumTrackTintColor={c.line}
-        thumbTintColor={c.accent}
-        onValueChange={(v) => setMinutes(Math.round(v))}
-        onSlidingComplete={(v) => {
-          const next = Math.round(v)
-          if (next !== saved) onResize(detail, next)
-        }}
-        accessibilityLabel="Duration in minutes"
-      />
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Duration</Text>
+        <Slider
+          style={styles.slider}
+          value={minutes}
+          minimumValue={SLIDER_STEP}
+          maximumValue={Math.max(SLIDER_MAX, saved)}
+          step={SLIDER_STEP}
+          minimumTrackTintColor={c.accent}
+          maximumTrackTintColor={c.line}
+          thumbTintColor={c.accent}
+          onValueChange={(v) => setMinutes(Math.round(v))}
+          onSlidingComplete={(v) => {
+            const next = Math.round(v)
+            if (next !== saved) onResize(detail, next)
+          }}
+          accessibilityLabel="Duration in minutes"
+        />
+      </View>
+
+      {detail.done ? null : (
+        <View style={styles.doneRow}>
+          <Pressable style={styles.doneButton} onPress={() => onDoneNow(detail)}>
+            <Text style={styles.doneButtonText}>Done now</Text>
+          </Pressable>
+          <Pressable style={styles.doneButton} onPress={() => onDoneAtEnd(detail)}>
+            <Text style={styles.doneButtonText}>Done at {clock(detail.end)}</Text>
+          </Pressable>
+        </View>
+      )}
     </Pressable>
   )
 }
@@ -699,7 +748,6 @@ function TodoList({
   onMinutes,
   onReorder,
   onDragging,
-  onComplete,
   onOpen,
 }: {
   todos: Todo[]
@@ -707,7 +755,6 @@ function TodoList({
   onMinutes: (todo: Todo, minutes: number) => void
   onReorder: (next: Todo[]) => void
   onDragging: (dragging: boolean) => void
-  onComplete: (todo: Todo) => void
   onOpen: (todo: Todo) => void
 }) {
   const [drag, setDrag] = useState<{ id: string; from: number; to: number } | null>(null)
@@ -807,7 +854,6 @@ function TodoList({
               today={today}
               onMinutes={(m) => onMinutes(t, m)}
               onOpen={() => onOpen(t)}
-              onComplete={() => onComplete(t)}
               handle={responderFor(t.id).panHandlers}
             />
           </Animated.View>
@@ -822,18 +868,14 @@ function TodoRow({
   today,
   onMinutes,
   onOpen,
-  onComplete,
   handle,
 }: {
   todo: Todo
   today: string
   onMinutes: (minutes: number) => void
   onOpen: () => void
-  onComplete: () => void
   handle: PanResponderInstance['panHandlers']
 }) {
-  // Fills in as soon as it's tapped; the todo leaves the list when the save reloads it
-  const [checked, setChecked] = useState(false)
   const minutes = Math.round((todo.end - todo.start) * 60)
   const options = durationOptions(minutes)
 
@@ -842,19 +884,6 @@ function TodoRow({
       <View {...handle} style={styles.handle} hitSlop={8} accessibilityLabel="Drag to reorder">
         <GripVertical size={18} color={c.muted} />
       </View>
-      <Pressable
-        onPress={() => {
-          if (checked) return
-          setChecked(true)
-          onComplete()
-        }}
-        hitSlop={8}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked }}
-        accessibilityLabel={`Complete ${todo.title}`}
-      >
-        {checked ? <CircleCheck size={22} color={c.accent} /> : <Circle size={22} color={c.muted} />}
-      </Pressable>
       <Pressable style={{ flex: 1 }} onPress={onOpen}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
@@ -1045,7 +1074,12 @@ const styles = StyleSheet.create({
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
   detailDay: { fontSize: 14, color: c.muted },
   detailTimes: { fontSize: 16, color: c.ink },
-  sliderLabel: { fontSize: 13, fontWeight: '600', color: c.muted, marginTop: 4 },
+  sliderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sliderLabel: { width: 64, fontSize: 13, fontWeight: '600', color: c.muted },
+  slider: { flex: 1 },
+  doneRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  doneButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, backgroundColor: c.accent },
+  doneButtonText: { fontSize: 16, fontWeight: '600', color: '#ffffff' },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },

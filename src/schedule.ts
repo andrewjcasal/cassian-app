@@ -123,6 +123,12 @@ export function nextQuarter(now: number) {
   return Math.ceil(now * 4) / 4
 }
 
+// "Done at <end time>": marks a block done exactly as scheduled, stamped at its
+// end so it reads as done on time. Nothing else moves.
+export function doneAtEnd(day: string, start: number, end: number) {
+  return { done: true, done_at: dateAt(day, Math.max(end, start)).toISOString() }
+}
+
 export function isDoneEarly(done: boolean, doneAt: string | null | undefined, day: string, start: number) {
   return !!(done && doneAt && new Date(doneAt) < dateAt(day, start))
 }

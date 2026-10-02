@@ -8,6 +8,7 @@ import {
   clock,
   dateAt,
   donePlan,
+  doneAtEnd,
   durationOptions,
   fromStored,
   logicalNow,
@@ -164,6 +165,14 @@ test('A block done early does not count as taken when finding a gap', () => {
   assert.equal(freeSlot(items, 16, 1), 16)
   assert.equal(freeSlot(items, 16, 1.5), 18)
   assert.equal(freeSlot([block('gray', 16, 17, { done: true, doneEarly: true })], 16, 1), 16)
+})
+
+test('Done at the scheduled end stamps the end time and never counts as done early', () => {
+  assert.deepEqual(doneAtEnd(DAY, at(22, 12), at(23, 12)), { done: true, done_at: dateAt(DAY, at(23, 12)).toISOString() })
+  const stamp = doneAtEnd(DAY, at(22, 12), at(23, 12)).done_at
+  assert.equal(isDoneEarly(true, stamp, DAY, at(22, 12)), false)
+  // After midnight the stamp lands on the next date
+  assert.equal(new Date(doneAtEnd(DAY, at(24, 30), at(25, 15)).done_at).getDate(), 2)
 })
 
 test('isDoneEarly is true only when done before the block starts', () => {
