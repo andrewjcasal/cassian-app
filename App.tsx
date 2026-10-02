@@ -20,6 +20,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import { ChevronLeft, ChevronRight, GripVertical, LogOut, Menu as MenuIcon, MoreHorizontal, Plus, Repeat } from 'lucide-react-native'
+import Slider from '@react-native-community/slider'
 import { supabase } from './src/supabase'
 import {
   type CalItem,
@@ -37,6 +38,7 @@ import {
   notStartedPlan,
   placeHabits,
   relayout,
+  resizeItemPlan,
   resizePlan,
   shiftDay,
   startNowPlan,
@@ -150,8 +152,11 @@ function SignIn() {
 type Tab = 'todos' | 'agenda'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
 type Menu = { item: CalItem; x: number; y: number }
-// What the tap-to-open card shows
-type Detail = { title: string; day: string; start: number; end: number }
+// What the tap-to-open card shows, and what a new length gets saved against
+type Detail = { title: string; day: string; start: number; end: number } & (
+  | { from: 'todo'; todo: Todo }
+  | { from: 'item'; item: CalItem }
+)
 
 function DayPage() {
   const today = toDayString(new Date())
@@ -307,6 +312,17 @@ function DayPage() {
     saveMoves(plan.moves)
   }
 
+  // The card's slider saves a new length, then the card shows the new end
+  const resizeDetail = async (d: Detail, minutes: number) => {
+    if (d.from === 'todo') await setMinutes(d.todo, minutes)
+    else {
+      const plan = resizeItemPlan(items, d.item, minutes)
+      if ('error' in plan) return setError(plan.error)
+      if (plan.moves.length) await saveMoves(plan.moves)
+    }
+    setDetail({ ...d, end: d.start + minutes / 60 })
+  }
+
   const setMinutes = async (todo: Todo, minutes: number) => {
     const plan = resizePlan(todos, todo, minutes)
     if ('error' in plan) return setError(plan.error)
@@ -379,7 +395,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail(t)} />
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ title: t.title, day: t.day, start: t.start, end: t.end, from: 'todo', todo: t })} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -400,7 +416,7 @@ function DayPage() {
             items={items}
             showNow={day === today}
             onMore={(item, x, y) => setMenu({ item, x, y })}
-            onOpen={(item) => setDetail({ title: item.title, day, start: item.start, end: item.end })}
+            onOpen={(item) => setDetail({ title: item.title, day, start: item.start, end: item.end, from: 'item', item })}
           />
         )}
 
@@ -430,18 +446,7 @@ function DayPage() {
       <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={() => setDetail(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setDetail(null)}>
           {detail ? (
-            <Pressable style={styles.detailCard} onPress={() => {}}>
-              <Text style={styles.detailTitle}>{detail.title}</Text>
-              {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Start</Text>
-                <Text style={styles.detailValue}>{clock(detail.start)}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>End</Text>
-                <Text style={styles.detailValue}>{clock(detail.end)}</Text>
-              </View>
-            </Pressable>
+            <DetailCard detail={detail} today={today} onResize={resizeDetail} />
           ) : null}
         </Pressable>
       </Modal>
@@ -514,6 +519,51 @@ function HabitsScreen({ onBack }: { onBack: () => void }) {
         ))}
       </View>
     </ScrollView>
+  )
+}
+
+// Slider steps for a block's length, in minutes
+const SLIDER_STEP = 5
+const SLIDER_MAX = 240
+
+function DetailCard({
+  detail,
+  today,
+  onResize,
+}: {
+  detail: Detail
+  today: string
+  onResize: (detail: Detail, minutes: number) => void
+}) {
+  const saved = Math.round((detail.end - detail.start) * 60)
+  const [minutes, setMinutes] = useState(saved)
+  useEffect(() => setMinutes(saved), [saved])
+
+  return (
+    // Swallows taps so only the backdrop closes the card
+    <Pressable style={styles.detailCard} onPress={() => {}}>
+      <Text style={styles.detailTitle}>{detail.title}</Text>
+      {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
+      <Text style={styles.detailTimes}>
+        {clock(detail.start)} – {clock(detail.start + minutes / 60)}
+      </Text>
+      <Text style={styles.detailDuration}>{minutes} min</Text>
+      <Slider
+        value={minutes}
+        minimumValue={SLIDER_STEP}
+        maximumValue={Math.max(SLIDER_MAX, saved)}
+        step={SLIDER_STEP}
+        minimumTrackTintColor={c.accent}
+        maximumTrackTintColor={c.line}
+        thumbTintColor={c.accent}
+        onValueChange={(v) => setMinutes(Math.round(v))}
+        onSlidingComplete={(v) => {
+          const next = Math.round(v)
+          if (next !== saved) onResize(detail, next)
+        }}
+        accessibilityLabel="Length in minutes"
+      />
+    </Pressable>
   )
 }
 
@@ -845,9 +895,8 @@ const styles = StyleSheet.create({
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
   detailDay: { fontSize: 14, color: c.muted },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  detailLabel: { fontSize: 16, color: c.muted },
-  detailValue: { fontSize: 16, color: c.ink, fontWeight: '600' },
+  detailTimes: { fontSize: 18, color: c.ink, fontWeight: '600' },
+  detailDuration: { fontSize: 14, color: c.muted },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },

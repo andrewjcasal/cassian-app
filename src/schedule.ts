@@ -221,6 +221,16 @@ export function notStartedPlan(
   return { moves }
 }
 
+// The same for a block on the calendar: a new length moves its end, and the
+// todos and habits after it shift by the same amount.
+export function resizeItemPlan(items: CalItem[], item: CalItem, minutes: number): { moves: Move[] } | { error: string } {
+  const delta = item.start + minutes / 60 - item.end
+  if (Math.abs(delta) < EPS) return { moves: [] }
+  const later = carried(items, item, item.end)
+  if (Math.max(item.end, ...later.map((it) => it.end)) + delta > 24 + EPS) return { error: 'That runs past midnight' }
+  return { moves: [{ id: item.id, kind: item.kind, start: item.start, end: item.end + delta }, ...later.map((it) => shift(it, delta))] }
+}
+
 // A new length moves this todo's end, and the same day's later todos shift by the
 // same amount so the chain stays back to back.
 export function resizePlan(todos: Todo[], todo: Todo, minutes: number): { moves: Move[] } | { error: string } {

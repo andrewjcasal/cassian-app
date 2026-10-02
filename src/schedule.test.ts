@@ -17,6 +17,7 @@ import {
   notStartedPlan,
   placeHabits,
   relayout,
+  resizeItemPlan,
   resizePlan,
   startNowPlan,
   timeOf,
@@ -212,6 +213,21 @@ test('resizePlan changes the length and shifts the same day later todos', () => 
   if (!('moves' in plan)) throw new Error(plan.error)
   assert.deepEqual(fmt(plan.moves), ['carve@16:00-17:30', 'washer@17:30-18:30'])
   assert.deepEqual(resizePlan(todos, carve, 60), { moves: [] })
+})
+
+test('resizeItemPlan changes a block length and shifts the todos and habits after it', () => {
+  const washer = block('washer', at(22, 12), at(23, 12))
+  const items = [
+    block('done', 20, 21, { done: true }),
+    washer,
+    block('skool', at(23, 12), at(23, 27), { source: 'habit', habitId: 'h1' }),
+    block('old', at(23, 30), at(23, 45), { source: 'manual' }),
+  ]
+  const longer = resizeItemPlan(items, washer, 30)
+  if (!('moves' in longer)) throw new Error(longer.error)
+  assert.deepEqual(fmt(longer.moves), ['washer@22:12-22:42', 'skool@22:42-22:57'])
+  assert.deepEqual(resizeItemPlan(items, washer, 60), { moves: [] })
+  assert.ok('error' in resizeItemPlan(items, washer, 120))
 })
 
 test('relayout re-packs the swapped range back to back', () => {
