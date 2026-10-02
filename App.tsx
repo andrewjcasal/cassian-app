@@ -771,9 +771,12 @@ function HabitsScreen({
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
       <Modal visible={adding} transparent animationType="none" onRequestClose={() => setAdding(false)}>
-        <Pressable style={styles.detailBackdrop} onPress={() => setAdding(false)}>
-          {adding ? <AddHabitCard onSave={addHabit} /> : null}
-        </Pressable>
+        {/* The name field opens the keyboard, so the card rises to sit above it */}
+        <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.detailBackdrop} onPress={() => setAdding(false)}>
+            {adding ? <AddHabitCard onSave={addHabit} /> : null}
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal visible={selected !== null} transparent animationType="none" onRequestClose={() => setSelected(null)}>
