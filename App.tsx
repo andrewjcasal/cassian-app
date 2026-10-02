@@ -21,6 +21,8 @@ import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import {
   CalendarDays,
+  Circle,
+  CircleCheck,
   ChevronLeft,
   ChevronRight,
   GripVertical,
@@ -386,6 +388,19 @@ function DayPage() {
     if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
   }
 
+  // The circle on a todo marks it done. On the day being shown it follows the same
+  // rules as Done in the block menu; on any other day it just marks it done.
+  const completeTodo = async (todo: Todo) => {
+    const item = todo.day === day ? items.find((it) => it.id === todo.id) : undefined
+    if (item) return setStatus(item, 'done')
+    const { error } = await supabase
+      .from('cass_time_blocks')
+      .update({ done: true, done_at: new Date().toISOString() })
+      .eq('id', todo.id)
+    if (error) return setError(error.message)
+    load()
+  }
+
   // Dragging a todo to a new spot re-packs the swapped range back to back from
   // where its first todo started, each keeping its own length.
   const reorder = async (next: Todo[]) => {
@@ -433,7 +448,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end })} />
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onComplete={completeTodo} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end })} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -684,6 +699,7 @@ function TodoList({
   onMinutes,
   onReorder,
   onDragging,
+  onComplete,
   onOpen,
 }: {
   todos: Todo[]
@@ -691,6 +707,7 @@ function TodoList({
   onMinutes: (todo: Todo, minutes: number) => void
   onReorder: (next: Todo[]) => void
   onDragging: (dragging: boolean) => void
+  onComplete: (todo: Todo) => void
   onOpen: (todo: Todo) => void
 }) {
   const [drag, setDrag] = useState<{ id: string; from: number; to: number } | null>(null)
@@ -790,6 +807,7 @@ function TodoList({
               today={today}
               onMinutes={(m) => onMinutes(t, m)}
               onOpen={() => onOpen(t)}
+              onComplete={() => onComplete(t)}
               handle={responderFor(t.id).panHandlers}
             />
           </Animated.View>
@@ -804,14 +822,18 @@ function TodoRow({
   today,
   onMinutes,
   onOpen,
+  onComplete,
   handle,
 }: {
   todo: Todo
   today: string
   onMinutes: (minutes: number) => void
   onOpen: () => void
+  onComplete: () => void
   handle: PanResponderInstance['panHandlers']
 }) {
+  // Fills in as soon as it's tapped; the todo leaves the list when the save reloads it
+  const [checked, setChecked] = useState(false)
   const minutes = Math.round((todo.end - todo.start) * 60)
   const options = durationOptions(minutes)
 
@@ -820,6 +842,19 @@ function TodoRow({
       <View {...handle} style={styles.handle} hitSlop={8} accessibilityLabel="Drag to reorder">
         <GripVertical size={18} color={c.muted} />
       </View>
+      <Pressable
+        onPress={() => {
+          if (checked) return
+          setChecked(true)
+          onComplete()
+        }}
+        hitSlop={8}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked }}
+        accessibilityLabel={`Complete ${todo.title}`}
+      >
+        {checked ? <CircleCheck size={22} color={c.accent} /> : <Circle size={22} color={c.muted} />}
+      </Pressable>
       <Pressable style={{ flex: 1 }} onPress={onOpen}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
