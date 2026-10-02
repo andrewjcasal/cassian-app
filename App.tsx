@@ -875,7 +875,7 @@ function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }
         </>
       ) : null}
       <Pressable
-        style={[styles.doneButton, !ready && styles.buttonDisabled]}
+        style={[styles.submitButton, !ready && styles.buttonDisabled]}
         disabled={!ready}
         onPress={() =>
           onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null })
@@ -1433,6 +1433,8 @@ const styles = StyleSheet.create({
   doneButtonText: { fontSize: 16, fontWeight: '600', color: '#ffffff' },
   // Disabled: muted gray text on the hairline gray, 5.35:1 (fading the green button
   // to 40% instead left white text at 1.94:1)
+  // A full-width button on its own line (doneButton is for sharing a row)
+  submitButton: { alignItems: 'center', paddingVertical: 12, borderRadius: 8, backgroundColor: c.accent, marginTop: 4 },
   buttonDisabled: { backgroundColor: c.line },
   buttonDisabledText: { color: c.muted },
   addButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
