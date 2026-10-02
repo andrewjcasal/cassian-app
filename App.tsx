@@ -195,7 +195,9 @@ function DayPage() {
   // Only the latest load may write, so a slow response for a day you've already
   // left can't land on top of the one you're looking at
   const latestLoad = useRef(0)
-  const [todos, setTodos] = useState<Todo[]>([])
+  // Todos are kept with the day they were loaded for, like blocks
+  const [todosFor, setTodosFor] = useState<{ day: string; list: Todo[] }>({ day: '', list: [] })
+  const todos = todosFor.day === day ? todosFor.list : []
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -265,6 +267,11 @@ function DayPage() {
     const run = ++latestLoad.current
     setLoading(true)
     setError(null)
+    let current = await fetchItems()
+    if (run !== latestLoad.current) return
+    if (day >= today && (await placeHabitBlocks(current))) current = await fetchItems()
+    if (run !== latestLoad.current) return
+    // After habits are placed, so a day's first visit lists them
     const todoRes = await supabase
       .from('cass_time_blocks')
       .select('id,title,day,start_time,end_time,habit_id')
@@ -273,17 +280,18 @@ function DayPage() {
       .order('day')
       .order('start_time')
     if (todoRes.error) setError(todoRes.error.message)
-    let current = await fetchItems()
-    if (run !== latestLoad.current) return
-    if (day >= today && (await placeHabitBlocks(current))) current = await fetchItems()
     if (run !== latestLoad.current) return
     setLoaded({ day, items: current })
-    setTodos(
-      (todoRes.data ?? []).map((t) => {
-        const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
-        return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id }
-      }),
-    )
+    setTodosFor({
+      day,
+      // Only the day being shown, by its 6am to 6am day
+      list: (todoRes.data ?? [])
+        .map((t) => {
+          const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
+          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id }
+        })
+        .filter((t) => t.day === day),
+    })
     setLoading(false)
   }, [day, today, fetchItems, placeHabitBlocks])
 
@@ -431,7 +439,7 @@ function DayPage() {
     const updates = relayout(todos, next)
     if (!updates.length) return
     const moved = new Map(updates.map((u) => [u.id, u]))
-    setTodos(next.map((t) => ({ ...t, ...(moved.get(t.id) ?? {}) })))
+    setTodosFor({ day, list: next.map((t) => ({ ...t, ...(moved.get(t.id) ?? {}) })) })
     const dayById = new Map(todos.map((t) => [t.id, t.day]))
     await saveMoves(
       updates.map((u) => ({ ...u, kind: 'block' as const })),
