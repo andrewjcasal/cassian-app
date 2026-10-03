@@ -387,11 +387,13 @@ export function quarterOf(hours: number) {
 
 // A new todo put at a tapped time: the todos and habits starting from there on
 // are pushed along after it as far as they overlap. Ones before it, fixed habits
-// and older calendar blocks stay put.
+// and older calendar blocks stay put. An event (evictOverlap) also pushes off a
+// todo or habit that started earlier and runs into it.
 export function insertAtPlan(
   items: CalItem[],
   start: number,
   length: number,
+  { evictOverlap = false }: { evictOverlap?: boolean } = {},
 ): { start: number; end: number; moves: Move[] } | { error: string } {
   const end = start + length
   const later = items
@@ -401,7 +403,7 @@ export function insertAtPlan(
         !it.done &&
         !it.fixed &&
         (it.source === 'app' || it.source === 'habit') &&
-        it.start >= start - EPS,
+        (evictOverlap ? it.end > start + EPS : it.start >= start - EPS),
     )
     .map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
   const moves = pushFrom(later, end)

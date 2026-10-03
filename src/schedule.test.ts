@@ -373,6 +373,22 @@ test('An event is never moved: rules only carry todos and habits', () => {
   assert.deepEqual(menuOptions(event, DAY, DAY, at(17, 30)).map(([k]) => k), ['done'])
 })
 
+test('An event pushes off every todo and habit it overlaps, even one that started earlier', () => {
+  const items = [
+    block('before', 15, at(16, 30)), // runs into a 4pm event
+    block('during', at(16, 30), at(17, 30)),
+    block('after', at(17, 30), 18),
+    block('clear', 15, 16), // ends right as the event starts, stays
+  ]
+  const plan = insertAtPlan(items, 16, 1, { evictOverlap: true })
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['before@17:00-18:30', 'during@18:30-19:30', 'after@19:30-20:00'])
+  // A todo added the same way leaves the earlier one where it is
+  const asTodo = insertAtPlan(items, 16, 1)
+  if (!('moves' in asTodo)) throw new Error(asTodo.error)
+  assert.ok(!asTodo.moves.some((m) => m.id === 'before'))
+})
+
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
   const carve = block('carve', 18, 19)
   const items = [

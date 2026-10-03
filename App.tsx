@@ -591,7 +591,7 @@ function DayPage() {
   // its end. An event is saved as source 'event', which no rule ever moves.
   const addTodoAt = async (title: string, start: number, minutes: number, as: 'todo' | 'done' | 'event') => {
     setAddAt(null)
-    const plan = insertAtPlan(items, start, minutes / 60)
+    const plan = insertAtPlan(items, start, minutes / 60, { evictOverlap: as === 'event' })
     if ('error' in plan) return setError(plan.error)
     const { error } = await supabase
       .from('cass_time_blocks')
