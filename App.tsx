@@ -514,13 +514,9 @@ function DayPage() {
       {tab === 'planning' ? null : tab === 'help' ? (
         <HelpScreen onSettings={setSettingsMenu} onTrack={trackHelp} />
       ) : (
-      <ScrollView
-        scrollEnabled={!dragging}
-        contentContainerStyle={styles.page}
-        keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-      >
-        <View style={styles.header}>
+      <View style={styles.screenFill}>
+        {/* Stays put while the agenda or todos scroll underneath */}
+        <View style={[styles.header, styles.fixedHeader]}>
           <Pressable onPress={() => setDay(shiftDay(day, -1))} hitSlop={10}>
             <ChevronLeft size={22} color={c.ink} />
           </Pressable>
@@ -535,37 +531,43 @@ function DayPage() {
             <SettingsButton onOpen={setSettingsMenu} />
           </View>
         </View>
+        <ScrollView
+          scrollEnabled={!dragging}
+          contentContainerStyle={styles.page}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+        >
+          {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        {tab === 'todos' ? (
-          <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed })} />
-            <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
-              <TextInput
-                style={styles.addInput}
-                value={draft}
-                onChangeText={setDraft}
-                placeholder="Add a todo"
-                placeholderTextColor={c.muted}
-                returnKeyType="done"
-                onSubmitEditing={add}
-              />
-              <Pressable onPress={add} hitSlop={8}>
-                <Plus size={20} color={c.accent} />
-              </Pressable>
+          {tab === 'todos' ? (
+            <View style={styles.card}>
+              <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed })} />
+              <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
+                <TextInput
+                  style={styles.addInput}
+                  value={draft}
+                  onChangeText={setDraft}
+                  placeholder="Add a todo"
+                  placeholderTextColor={c.muted}
+                  returnKeyType="done"
+                  onSubmitEditing={add}
+                />
+                <Pressable onPress={add} hitSlop={8}>
+                  <Plus size={20} color={c.accent} />
+                </Pressable>
+              </View>
             </View>
-          </View>
-        ) : (
-          <DayGrid
-            items={items}
-            showNow={day === today}
-            onMore={(item, x, y) => setMenu({ item, x, y })}
-            onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
-          />
-        )}
+          ) : (
+            <DayGrid
+              items={items}
+              showNow={day === today}
+              onMore={(item, x, y) => setMenu({ item, x, y })}
+              onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
+            />
+          )}
 
-      </ScrollView>
+        </ScrollView>
+      </View>
       )}
 
       <View style={styles.tabBar}>
@@ -1551,6 +1553,14 @@ const styles = StyleSheet.create({
   page: { padding: 12, paddingBottom: 40 },
   signIn: { flex: 1, padding: 16, justifyContent: 'center', gap: 10 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  fixedHeader: {
+    marginBottom: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: c.bg,
+    borderBottomWidth: 1,
+    borderBottomColor: c.line,
+  },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
   subtitle: { fontSize: 14, color: c.muted, textAlign: 'center' },
