@@ -26,6 +26,7 @@ import {
   resumeTimer,
   habitHistory,
   routineFrom,
+  swipeDays,
   switchRoutine,
   insertAtPlan,
   interruptPlan,
@@ -349,6 +350,13 @@ test('quarterOf rounds a tapped time to the nearest quarter hour', () => {
   assert.equal(quarterOf(at(16, 8)), at(16, 15))
   assert.equal(quarterOf(at(16, 52)), at(16, 45))
   assert.equal(quarterOf(at(16, 53)), 17)
+})
+
+test('swipeDays: a clearly sideways swipe moves a day, anything else does nothing', () => {
+  assert.equal(swipeDays(-90, 10), 1) // swipe left: next day
+  assert.equal(swipeDays(90, -12), -1) // swipe right: previous day
+  assert.equal(swipeDays(-40, 0), 0) // too short
+  assert.equal(swipeDays(-90, 70), 0) // too diagonal, probably a scroll
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

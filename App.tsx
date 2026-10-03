@@ -66,6 +66,7 @@ import {
   habitHistory,
   resumeTimer,
   routineFrom,
+  swipeDays,
   switchRoutine,
   type RoutineStep,
   insertAtPlan,
@@ -229,6 +230,17 @@ function DayPage() {
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  // Swiping sideways on the agenda moves a day (swipeDays: left is the next day).
+  // It only claims a gesture that's clearly sideways, so scrolling still works.
+  const daySwipe = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 20 && Math.abs(g.dx) > 2 * Math.abs(g.dy),
+      onPanResponderRelease: (_e, g) => {
+        const by = swipeDays(g.dx, g.dy)
+        if (by) setDay((d) => shiftDay(d, by))
+      },
+    }),
+  ).current
   // The time tapped in the agenda's right strip, for a new todo there
   const [addAt, setAddAt] = useState<number | null>(null)
   // The routine timer that's running, if any (full page)
@@ -592,7 +604,7 @@ function DayPage() {
       {tab === 'planning' ? null : tab === 'help' ? (
         <HelpScreen onSettings={setSettingsMenu} onTrack={trackHelp} />
       ) : (
-      <View style={styles.screenFill}>
+      <View style={styles.screenFill} {...(tab === 'agenda' ? daySwipe.panHandlers : {})}>
         {/* Stays put while the agenda or todos scroll underneath */}
         <View style={[styles.header, styles.fixedHeader]}>
           <Pressable onPress={() => setDay(shiftDay(day, -1))} hitSlop={10}>

@@ -589,3 +589,11 @@ export function switchRoutine(
 export function extendStep(stepStartedAt: number, minutes: number) {
   return stepStartedAt + minutes * 60_000
 }
+
+// A day swipe on the agenda: at least 60px sideways and mostly sideways (twice as
+// far across as down), so a scroll never changes the day. Left is the next day.
+export const SWIPE_MIN_PX = 60
+export function swipeDays(dx: number, dy: number) {
+  if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < 2 * Math.abs(dy)) return 0
+  return dx < 0 ? 1 : -1
+}
