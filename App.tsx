@@ -1354,6 +1354,25 @@ function RoutineTimer({
   const markedDone = useRef(false)
   // When the current step really began, for its calendar record
   const stepBegan = useRef(run.stepStartedAt)
+  // Switch! slides the content out left and the new step in from the right; when
+  // that step is done it slides back the other way
+  const { width } = useWindowDimensions()
+  const slide = useRef(new Animated.Value(0)).current
+  const cameBySwitch = useRef(false)
+  const slideTo = (direction: 'left' | 'right', between: () => void) => {
+    const out = direction === 'left' ? -width : width
+    Animated.timing(slide, { toValue: out, duration: 160, useNativeDriver: true }).start(() => {
+      between()
+      slide.setValue(-out)
+      Animated.spring(slide, { toValue: 0, bounciness: 10, speed: 14, useNativeDriver: true }).start()
+    })
+  }
+  // Leaving a step that came by Switch! slides back to the right
+  const leaveStep = (move: () => void) => {
+    if (!cameBySwitch.current) return move()
+    cameBySwitch.current = false
+    slideTo('right', move)
+  }
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 500)
     return () => clearInterval(id)
@@ -1373,7 +1392,8 @@ function RoutineTimer({
       onSegment(run.steps[k].name, stepBegan.current, boundary)
       stepBegan.current = boundary
     }
-    onChange(state.index, state.stepStartedAt)
+    const { index, stepStartedAt } = state
+    leaveStep(() => onChange(index, stepStartedAt))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.index])
 
@@ -1395,8 +1415,9 @@ function RoutineTimer({
   const goNext = () => {
     endCurrent()
     setPausedAt(null)
-    if (next) onChange(state.index + 1, Date.now())
-    else onClose()
+    if (!next) return onClose()
+    const index = state.index + 1
+    leaveStep(() => onChange(index, Date.now()))
   }
 
   const stop = () => {
@@ -1415,29 +1436,35 @@ function RoutineTimer({
     setPausedAt(null)
     setSwitching(false)
     setOneOff('')
-    onSwitch(choice, state.index)
+    const index = state.index
+    slideTo('left', () => {
+      cameBySwitch.current = true
+      onSwitch(choice, index)
+    })
   }
 
   return (
     <SafeAreaView style={styles.timerScreen}>
-      <Text style={styles.timerStep}>{step.name}</Text>
-      <Text style={styles.timerClock}>{state.remainingMs === null ? mmss(state.elapsedMs) : mmss(state.remainingMs)}</Text>
-      <Text style={styles.timerNext}>{pausedAt !== null ? 'Paused' : next ? `Next: ${next.name}` : 'Last one'}</Text>
-      <View style={styles.timerButtons}>
-        <Pressable style={[styles.timerStop, styles.timerPause]} onPress={togglePause}>
-          {pausedAt === null ? <Pause size={18} color={c.ink} /> : <Play size={18} color={c.ink} />}
-          <Text style={styles.timerStopText}>{pausedAt === null ? 'Pause' : 'Resume'}</Text>
-        </Pressable>
-        <Pressable style={[styles.submitButton, styles.timerButton]} onPress={goNext}>
-          <Text style={styles.doneButtonText}>{next ? 'Next' : 'Done'}</Text>
-        </Pressable>
-        <Pressable style={[styles.timerButton, styles.timerStop]} onPress={stop}>
-          <Text style={styles.timerStopText}>Stop</Text>
-        </Pressable>
-        <Pressable style={[styles.timerButton, styles.timerStop]} onPress={() => setSwitching(true)}>
-          <Text style={styles.timerStopText}>Switch!</Text>
-        </Pressable>
-      </View>
+      <Animated.View style={[styles.timerContent, { transform: [{ translateX: slide }] }]}>
+        <Text style={styles.timerStep}>{step.name}</Text>
+        <Text style={styles.timerClock}>{state.remainingMs === null ? mmss(state.elapsedMs) : mmss(state.remainingMs)}</Text>
+        <Text style={styles.timerNext}>{pausedAt !== null ? 'Paused' : next ? `Next: ${next.name}` : 'Last one'}</Text>
+        <View style={styles.timerButtons}>
+          <Pressable style={[styles.timerStop, styles.timerPause]} onPress={togglePause}>
+            {pausedAt === null ? <Pause size={18} color={c.ink} /> : <Play size={18} color={c.ink} />}
+            <Text style={styles.timerStopText}>{pausedAt === null ? 'Pause' : 'Resume'}</Text>
+          </Pressable>
+          <Pressable style={[styles.submitButton, styles.timerButton]} onPress={goNext}>
+            <Text style={styles.doneButtonText}>{next ? 'Next' : 'Done'}</Text>
+          </Pressable>
+          <Pressable style={[styles.timerButton, styles.timerStop]} onPress={stop}>
+            <Text style={styles.timerStopText}>Stop</Text>
+          </Pressable>
+          <Pressable style={[styles.timerButton, styles.timerStop]} onPress={() => setSwitching(true)}>
+            <Text style={styles.timerStopText}>Switch!</Text>
+          </Pressable>
+        </View>
+      </Animated.View>
 
       <Modal visible={switching} transparent animationType="none" onRequestClose={() => setSwitching(false)}>
         <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -1878,7 +1905,8 @@ const styles = StyleSheet.create({
     backgroundColor: c.bg,
   },
   stepCardText: { fontSize: 13, fontWeight: '600', color: c.ink },
-  timerScreen: { flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center', padding: 16, gap: 12 },
+  timerScreen: { flex: 1, backgroundColor: c.bg, justifyContent: 'center', padding: 16, overflow: 'hidden' },
+  timerContent: { alignItems: 'center', gap: 12 },
   timerStep: { fontSize: 28, fontWeight: '600', color: c.ink },
   timerClock: { fontSize: 72, fontWeight: '300', color: c.ink, fontVariant: ['tabular-nums'] },
   timerNext: { fontSize: 16, color: c.muted },
