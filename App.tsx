@@ -105,6 +105,8 @@ const c = {
   accent: '#2f5d50',
   block: '#e6efe9',
   blockDone: '#4ade80',
+  // Events (fixed appointments) on the agenda
+  event: '#dbeafe',
   doneEarly: '#4a4a48',
   onDark: '#ffffff',
   onDarkMuted: '#e4e2dc',
@@ -1937,7 +1939,15 @@ function DayGrid({
               {
                 top: top(it.start) + 1,
                 height,
-                backgroundColor: dark ? c.doneEarly : it.done ? c.blockDone : it.kind === 'block' ? c.block : c.task,
+                backgroundColor: dark
+                  ? c.doneEarly
+                  : it.done
+                    ? c.blockDone
+                    : it.source === 'event'
+                      ? c.event
+                      : it.kind === 'block'
+                        ? c.block
+                        : c.task,
               },
             ]}
           >
