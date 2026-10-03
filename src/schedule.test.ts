@@ -391,6 +391,14 @@ test('An event pushes off every todo and habit it overlaps, even one that starte
   assert.ok(!asTodo.moves.some((m) => m.id === 'before'))
 })
 
+test('Moving an event from its card moves it and pushes the todos it now overlaps', () => {
+  const event = block('dentist', 16, 17, { source: 'event', fixed: true })
+  const items = [event, block('washer', 17, 18), block('later', 20, 21)]
+  const plan = moveStartPlan(items, event, at(16, 30))
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['dentist@16:30-17:30', 'washer@17:30-18:30'])
+})
+
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
   const carve = block('carve', 18, 19)
   const items = [

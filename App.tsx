@@ -1409,7 +1409,8 @@ function DetailCard({
         {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
       </Text>
 
-      {detail.fixed ? (
+      {/* A set-time habit stays at its time; an event's time is yours to move */}
+      {detail.fixed && !detail.event ? (
         <View style={styles.sliderRow}>
           <Text style={styles.sliderLabel}>Start</Text>
           <Text style={styles.minutesLabel}>Fixed at {clock(detail.start)}</Text>
