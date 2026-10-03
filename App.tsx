@@ -108,6 +108,14 @@ function dayLabel(day: string) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
 }
 
+// Whether a block's linked habit (the embedded cass_habits row) has a set time.
+// Without generated types the client calls it a list; for one habit per block the
+// API sends one object, so this accepts either.
+function hasSetTime(habit: unknown) {
+  const row = (Array.isArray(habit) ? habit[0] : habit) as { start_time?: string | null } | null | undefined
+  return !!row?.start_time
+}
+
 // How far into today we are; before 6am that's 24 plus the hour (see logicalNow)
 function nowHours() {
   return logicalNow(new Date()).hours
@@ -192,6 +200,8 @@ type Detail = {
   start: number
   end: number
   done: boolean
+  // A set-time habit: the card shows its time in place of the start slider
+  fixed: boolean
 }
 
 function DayPage() {
@@ -225,7 +235,8 @@ function DayPage() {
   const fetchDayItems = useCallback(async (day: string) => {
     const next = shiftDay(day, 1)
     const morning = timeOf(DAY_START)
-    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at'
+    // cass_habits(start_time) says whether the block's habit has a set time (fixed)
+    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at,cass_habits(start_time)'
     const taskCols = 'id,title,day,start_time,end_time,done'
     const [blockRes, lateBlockRes, taskRes, lateTaskRes] = await Promise.all([
       supabase.from('cass_time_blocks').select(blockCols).eq('day', day).gte('start_time', morning),
@@ -238,7 +249,8 @@ function DayPage() {
     const blocks: CalItem[] = [...(blockRes.data ?? []), ...(lateBlockRes.data ?? [])].map((b) => {
       const { start, end } = fromStored(b.day, b.start_time, b.end_time)
       const doneEarly = isDoneEarly(b.done, b.done_at, day, start)
-      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source, doneEarly }
+      const fixed = hasSetTime(b.cass_habits)
+      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source, doneEarly, fixed }
     })
     const tasks: CalItem[] = [...(taskRes.data ?? []), ...(lateTaskRes.data ?? [])].map((t) => {
       const { start, end } = fromStored(t.day, t.start_time!, t.end_time)
@@ -293,7 +305,7 @@ function DayPage() {
     // After habits are placed, so a day's first visit lists them
     const todoRes = await supabase
       .from('cass_time_blocks')
-      .select('id,title,day,start_time,end_time,habit_id')
+      .select('id,title,day,start_time,end_time,habit_id,cass_habits(start_time)')
       .in('source', ['app', 'habit'])
       .eq('done', false)
       .order('day')
@@ -307,7 +319,8 @@ function DayPage() {
       list: (todoRes.data ?? [])
         .map((t) => {
           const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
-          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id }
+          const fixed = hasSetTime(t.cass_habits)
+          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, fixed }
         })
         .filter((t) => t.day === day),
     })
@@ -527,7 +540,7 @@ function DayPage() {
 
         {tab === 'todos' ? (
           <View style={styles.card}>
-            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false })} />
+            <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed })} />
             <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
               <TextInput
                 style={styles.addInput}
@@ -548,7 +561,7 @@ function DayPage() {
             items={items}
             showNow={day === today}
             onMore={(item, x, y) => setMenu({ item, x, y })}
-            onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done })}
+            onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
           />
         )}
 
@@ -1136,25 +1149,32 @@ function DetailCard({
         {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
       </Text>
 
-      <View style={styles.sliderRow}>
-        <Text style={styles.sliderLabel}>Start</Text>
-        <Slider
-          style={styles.slider}
-          value={offset}
-          minimumValue={-START_SLIDER_RANGE}
-          maximumValue={START_SLIDER_RANGE}
-          step={SLIDER_STEP}
-          minimumTrackTintColor={c.line}
-          maximumTrackTintColor={c.line}
-          thumbTintColor={c.accent}
-          onValueChange={(v) => setOffset(Math.round(v))}
-          onSlidingComplete={() => {
-            if (startMin !== savedStart) onMove(detail, startMin / 60)
-            else setOffset(0)
-          }}
-          accessibilityLabel="Move the start time earlier or later"
-        />
-      </View>
+      {detail.fixed ? (
+        <View style={styles.sliderRow}>
+          <Text style={styles.sliderLabel}>Start</Text>
+          <Text style={styles.minutesLabel}>Fixed at {clock(detail.start)}</Text>
+        </View>
+      ) : (
+        <View style={styles.sliderRow}>
+          <Text style={styles.sliderLabel}>Start</Text>
+          <Slider
+            style={styles.slider}
+            value={offset}
+            minimumValue={-START_SLIDER_RANGE}
+            maximumValue={START_SLIDER_RANGE}
+            step={SLIDER_STEP}
+            minimumTrackTintColor={c.line}
+            maximumTrackTintColor={c.line}
+            thumbTintColor={c.accent}
+            onValueChange={(v) => setOffset(Math.round(v))}
+            onSlidingComplete={() => {
+              if (startMin !== savedStart) onMove(detail, startMin / 60)
+              else setOffset(0)
+            }}
+            accessibilityLabel="Move the start time earlier or later"
+          />
+        </View>
+      )}
 
       <View style={styles.sliderRow}>
         <Text style={styles.sliderLabel}>Duration</Text>
@@ -1407,9 +1427,14 @@ function TodoRow({
 
   return (
     <View style={styles.todoRow}>
-      <View {...handle} style={styles.handle} hitSlop={8} accessibilityLabel="Drag to reorder">
-        <GripVertical size={18} color={c.muted} />
-      </View>
+      {todo.fixed ? (
+        // A fixed habit keeps its time, so it has no drag handle
+        <View style={[styles.handle, styles.handleSpacer]} />
+      ) : (
+        <View {...handle} style={styles.handle} hitSlop={8} accessibilityLabel="Drag to reorder">
+          <GripVertical size={18} color={c.muted} />
+        </View>
+      )}
       <Pressable style={{ flex: 1 }} onPress={onOpen}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
@@ -1546,6 +1571,7 @@ const styles = StyleSheet.create({
   todoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 8 },
   todoText: { fontSize: 16, color: c.ink },
   handle: { paddingVertical: 6, paddingRight: 2 },
+  handleSpacer: { width: 20 },
   dragging: {
     zIndex: 2,
     backgroundColor: c.card,

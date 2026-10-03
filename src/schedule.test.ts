@@ -218,6 +218,41 @@ test('placeHabits puts a set-time habit at its time first, and the rest fill gap
   assert.deepEqual(fmt(late.map((p) => ({ ...p, id: p.habitId }))), ['shutdown@23:00-23:15'])
 })
 
+test('A fixed habit block is never moved by the rules that push or pull later blocks', () => {
+  const shutdown = block('shutdown', 23, at(23, 15), { source: 'habit', habitId: 'h3', fixed: true })
+  const washer = block('washer', 22, 23)
+  const items = [washer, shutdown]
+  const ids = (plan: { moves: { id: string }[] } | { error: string }) => {
+    if (!('moves' in plan)) throw new Error(plan.error)
+    return plan.moves.map((m) => m.id)
+  }
+  assert.deepEqual(ids(startNowPlan(items, washer, at(22, 10))), ['washer'])
+  assert.deepEqual(donePlan(items, washer, DAY, DAY, at(22, 30)).moves.map((m) => m.id), [])
+  assert.deepEqual(ids(notStartedPlan([block('x', 15, 16), ...items], block('x', 15, 16), DAY, DAY, at(21, 50))), ['x', 'washer'])
+  assert.deepEqual(ids(resizeItemPlan(items, washer, 90)), ['washer'])
+  assert.deepEqual(ids(moveStartPlan(items, washer, at(22, 30))), ['washer'])
+  const interrupt = interruptPlan(items, at(22, 50), 0.5)
+  if (!('moves' in interrupt)) throw new Error(interrupt.error)
+  assert.deepEqual(interrupt.moves.map((m) => m.id), ['washer'])
+})
+
+test('A fixed block offers no Start now or Not started', () => {
+  const keys = (item: CalItem, now: number) => menuOptions(item, DAY, DAY, now).map(([k]) => k).join(',')
+  const shutdown = block('shutdown', 23, at(23, 15), { source: 'habit', fixed: true })
+  assert.equal(keys(shutdown, at(23, 5)), 'done')
+  assert.equal(keys(shutdown, at(23, 30)), 'done,follow_up')
+})
+
+test('Fixed todos stay put on the Todos tab: resize and reorder leave them alone', () => {
+  const a = todo('a', 22, 23)
+  const shutdown = { ...todo('shutdown', 23, at(23, 15)), fixed: true }
+  const resized = resizePlan([a, shutdown], a, 90)
+  if (!('moves' in resized)) throw new Error(resized.error)
+  assert.deepEqual(resized.moves.map((m) => m.id), ['a'])
+  const b = todo('b', at(23, 15), at(23, 45))
+  assert.deepEqual(relayout([a, shutdown, b], [b, shutdown, a]).map((u) => u.id).sort(), ['a', 'b'])
+})
+
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
   const carve = block('carve', 18, 19)
   const items = [

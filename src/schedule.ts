@@ -14,9 +14,11 @@ export type CalItem = {
   source?: string
   // Marked done before its start time
   doneEarly?: boolean
+  // A set-time habit (Shut down at 11pm): no rule moves it
+  fixed?: boolean
 }
 
-export type Todo = { id: string; title: string; day: string; start: number; end: number; habit: boolean }
+export type Todo = { id: string; title: string; day: string; start: number; end: number; habit: boolean; fixed?: boolean }
 
 export type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
 
@@ -142,6 +144,7 @@ function carried(items: CalItem[], item: CalItem, from: number) {
       it.id !== item.id &&
       it.kind === 'block' &&
       !it.done &&
+      !it.fixed &&
       (it.source === 'app' || it.source === 'habit') &&
       it.start >= from - EPS,
   )
@@ -308,6 +311,7 @@ export function notStartedPlan(
         it.id !== item.id &&
         it.kind === 'block' &&
         !it.done &&
+        !it.fixed &&
         (it.source === 'app' || it.source === 'habit') &&
         it.end > at + EPS,
     )
@@ -365,7 +369,9 @@ export function interruptPlan(
   const start = minuteOf(now)
   const end = start + length
   const rest = items
-    .filter((it) => it.kind === 'block' && !it.done && (it.source === 'app' || it.source === 'habit') && it.end > start + EPS)
+    .filter(
+      (it) => it.kind === 'block' && !it.done && !it.fixed && (it.source === 'app' || it.source === 'habit') && it.end > start + EPS,
+    )
     .map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
   const moves = pushFrom(rest, end)
   if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
@@ -391,7 +397,7 @@ export function moveStartPlan(items: CalItem[], item: CalItem, newStart: number)
 
 export function moveTodoStartPlan(todos: Todo[], todo: Todo, newStart: number) {
   const others = todos
-    .filter((t) => t.day === todo.day && t.id !== todo.id)
+    .filter((t) => t.day === todo.day && t.id !== todo.id && !t.fixed)
     .map((t): Move => ({ id: t.id, kind: 'block', start: t.start, end: t.end }))
   return moveWith({ id: todo.id, kind: 'block', start: todo.start, end: todo.end }, others, newStart)
 }
@@ -414,14 +420,17 @@ export function resizeItemPlan(items: CalItem[], item: CalItem, minutes: number)
 // The same from the Todos tab, against that day's todos.
 export function resizePlan(todos: Todo[], todo: Todo, minutes: number): { moves: Move[] } | { error: string } {
   const later = todos
-    .filter((t) => t.day === todo.day && t.id !== todo.id && t.start >= todo.end - EPS)
+    .filter((t) => t.day === todo.day && t.id !== todo.id && !t.fixed && t.start >= todo.end - EPS)
     .map((t): Move => ({ id: t.id, kind: 'block', start: t.start, end: t.end }))
   return resizeWith({ id: todo.id, kind: 'block', start: todo.start, end: todo.end }, later, minutes)
 }
 
 // After a drag, the todos whose order changed, per day, laid back to back from
 // where the first of them started. Todos outside the changed range keep their times.
-export function relayout(before: Todo[], after: Todo[]) {
+export function relayout(allBefore: Todo[], allAfter: Todo[]) {
+  // Fixed todos keep their times, so only the others are laid out
+  const before = allBefore.filter((t) => !t.fixed)
+  const after = allAfter.filter((t) => !t.fixed)
   const updates: { id: string; start: number; end: number }[] = []
   for (const day of new Set(before.map((t) => t.day))) {
     const old = before.filter((t) => t.day === day)
@@ -441,7 +450,8 @@ export function relayout(before: Todo[], after: Todo[]) {
   return updates
 }
 
-// The block menu. Done hides once a block is done. Start now shows only while a
+// The block menu. A fixed block never offers Start now or Not started. Done
+// hides once a block is done. Start now shows only while a
 // block is under way; once it has ended, Not started covers it. Not started
 // shows only once its end has passed (any earlier day counts). Add follow-up
 // hides while the block is under way.
@@ -450,9 +460,9 @@ export function menuOptions(item: CalItem, day: string, today: string, now: numb
   const inProgress = isToday && item.start <= now && now < item.end
   const ended = day < today || (isToday && item.end <= now)
   const options: [Status, string][] = []
-  if (inProgress && !item.done && item.start < minuteOf(now)) options.push(['start_now', 'Start now'])
+  if (!item.fixed && inProgress && !item.done && item.start < minuteOf(now)) options.push(['start_now', 'Start now'])
   if (!item.done) options.push(['done', 'Done'])
-  if (ended) options.push(['not_started', 'Not started'])
+  if (ended && !item.fixed) options.push(['not_started', 'Not started'])
   if (!inProgress) options.push(['follow_up', 'Add follow-up'])
   return options
 }
