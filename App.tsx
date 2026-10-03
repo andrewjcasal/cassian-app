@@ -233,12 +233,30 @@ function DayPage() {
   const [detail, setDetail] = useState<Detail | null>(null)
   // Swiping sideways on the agenda moves a day (swipeDays: left is the next day).
   // It only claims a gesture that's clearly sideways, so scrolling still works.
+  // The agenda follows the finger; a real swipe slides the day off that side and
+  // the next one springs in from the other, anything less springs back.
+  const daySlide = useRef(new Animated.Value(0)).current
+  const screenWidth = useRef(0)
+  screenWidth.current = useWindowDimensions().width
   const daySwipe = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 20 && Math.abs(g.dx) > 2 * Math.abs(g.dy),
+      onPanResponderMove: (_e, g) => daySlide.setValue(g.dx),
       onPanResponderRelease: (_e, g) => {
         const by = swipeDays(g.dx, g.dy)
-        if (by) setDay((d) => shiftDay(d, by))
+        if (!by) {
+          Animated.spring(daySlide, { toValue: 0, bounciness: 6, useNativeDriver: true }).start()
+          return
+        }
+        const off = by > 0 ? -screenWidth.current : screenWidth.current
+        Animated.timing(daySlide, { toValue: off, duration: 140, useNativeDriver: true }).start(() => {
+          setDay((d) => shiftDay(d, by))
+          daySlide.setValue(-off)
+          Animated.spring(daySlide, { toValue: 0, bounciness: 8, speed: 16, useNativeDriver: true }).start()
+        })
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(daySlide, { toValue: 0, useNativeDriver: true }).start()
       },
     }),
   ).current
@@ -645,43 +663,45 @@ function DayPage() {
             <SettingsButton onOpen={setSettingsMenu} />
           </View>
         </View>
-        <ScrollView
-          scrollEnabled={!dragging}
-          contentContainerStyle={styles.page}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pullToRefresh} />}
-        >
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+        <Animated.View style={[styles.screenFill, { transform: [{ translateX: tab === 'agenda' ? daySlide : 0 }] }]}>
+          <ScrollView
+            scrollEnabled={!dragging}
+            contentContainerStyle={styles.page}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pullToRefresh} />}
+          >
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          {tab === 'todos' ? (
-            <View style={styles.card}>
-              <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed })} />
-              <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
-                <TextInput
-                  style={styles.addInput}
-                  value={draft}
-                  onChangeText={setDraft}
-                  placeholder="Add a todo"
-                  placeholderTextColor={c.muted}
-                  returnKeyType="done"
-                  onSubmitEditing={add}
-                />
-                <Pressable onPress={add} hitSlop={8}>
-                  <Plus size={20} color={c.accent} />
-                </Pressable>
+            {tab === 'todos' ? (
+              <View style={styles.card}>
+                <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed })} />
+                <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
+                  <TextInput
+                    style={styles.addInput}
+                    value={draft}
+                    onChangeText={setDraft}
+                    placeholder="Add a todo"
+                    placeholderTextColor={c.muted}
+                    returnKeyType="done"
+                    onSubmitEditing={add}
+                  />
+                  <Pressable onPress={add} hitSlop={8}>
+                    <Plus size={20} color={c.accent} />
+                  </Pressable>
+                </View>
               </View>
-            </View>
-          ) : (
-            <DayGrid
-              items={items}
-              showNow={day === today}
-              onMore={(item, x, y) => setMenu({ item, x, y })}
-              onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
-              onAddAt={setAddAt}
-            />
-          )}
+            ) : (
+              <DayGrid
+                items={items}
+                showNow={day === today}
+                onMore={(item, x, y) => setMenu({ item, x, y })}
+                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
+                onAddAt={setAddAt}
+              />
+            )}
 
-        </ScrollView>
+          </ScrollView>
+        </Animated.View>
       </View>
       )}
 
