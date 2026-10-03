@@ -16,6 +16,8 @@ export type CalItem = {
   doneEarly?: boolean
   // A set-time habit (Shut down at 11pm): no rule moves it
   fixed?: boolean
+  // A routine step recorded under its parent block (Shut down); kept off the grid
+  processId?: string | null
 }
 
 export type Todo = { id: string; title: string; day: string; start: number; end: number; habit: boolean; fixed?: boolean }
@@ -495,7 +497,7 @@ export function halfSides(items: CalItem[], top: (hours: number) => number, minP
 
 // A routine is a run of timed steps (the Shut down habit's Dishwasher, Empty sink,
 // Wet food, then Puzzles). A step with no minutes counts up until it's ended.
-export type RoutineStep = { name: string; minutes: number | null }
+export type RoutineStep = { name: string; minutes: number | null; oneOff?: boolean }
 
 // Starting from a picked step runs that step and every one after it
 export function routineFrom(steps: RoutineStep[], start: string) {
@@ -531,4 +533,18 @@ export function advanceTimer(steps: RoutineStep[], index: number, stepStartedAt:
 // paused, so the paused stretch doesn't count against the step
 export function resumeTimer(stepStartedAt: number, pausedAt: number, now: number) {
   return stepStartedAt + (now - pausedAt)
+}
+
+// Switch! during a routine. Picking one of the routine's steps jumps to it and
+// runs on from there. A one-off (something typed in, like a missed todo) starts
+// now, counting up, and Next goes back to the step it interrupted, from the top.
+// A one-off exists for this run only.
+export function switchRoutine(
+  routine: RoutineStep[],
+  running: RoutineStep[],
+  index: number,
+  choice: { step: string } | { oneOff: string },
+): RoutineStep[] {
+  if ('step' in choice) return routineFrom(routine, choice.step)
+  return [{ name: choice.oneOff, minutes: null, oneOff: true }, ...running.slice(index).filter((s) => !s.oneOff)]
 }

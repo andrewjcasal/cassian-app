@@ -65,6 +65,7 @@ import {
   habitHistory,
   resumeTimer,
   routineFrom,
+  switchRoutine,
   type RoutineStep,
   interruptPlan,
   habitsForDay,
@@ -226,6 +227,8 @@ function DayPage() {
   const [detail, setDetail] = useState<Detail | null>(null)
   // The routine timer that's running, if any (full page)
   const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
+  // A routine block's recorded steps, shown on its card under the done buttons
+  const [detailParts, setDetailParts] = useState<{ id: string; title: string; start: number; end: number }[]>([])
   const [dragging, setDragging] = useState(false)
   // Where the settings icon was tapped, so its menu opens beside it
   const [settingsMenu, setSettingsMenu] = useState<{ x: number; y: number } | null>(null)
@@ -239,7 +242,7 @@ function DayPage() {
     const next = shiftDay(day, 1)
     const morning = timeOf(DAY_START)
     // cass_habits(start_time) says whether the block's habit has a set time (fixed)
-    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at,cass_habits(start_time)'
+    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at,process_id,cass_habits(start_time)'
     const taskCols = 'id,title,day,start_time,end_time,done'
     const [blockRes, lateBlockRes, taskRes, lateTaskRes] = await Promise.all([
       supabase.from('cass_time_blocks').select(blockCols).eq('day', day).gte('start_time', morning),
@@ -253,7 +256,19 @@ function DayPage() {
       const { start, end } = fromStored(b.day, b.start_time, b.end_time)
       const doneEarly = isDoneEarly(b.done, b.done_at, day, start)
       const fixed = hasSetTime(b.cass_habits)
-      return { id: b.id, title: b.title, start, end, kind: 'block', done: b.done, habitId: b.habit_id, source: b.source, doneEarly, fixed }
+      return {
+        id: b.id,
+        title: b.title,
+        start,
+        end,
+        kind: 'block',
+        done: b.done,
+        habitId: b.habit_id,
+        source: b.source,
+        doneEarly,
+        fixed,
+        processId: b.process_id,
+      }
     })
     const tasks: CalItem[] = [...(taskRes.data ?? []), ...(lateTaskRes.data ?? [])].map((t) => {
       const { start, end } = fromStored(t.day, t.start_time!, t.end_time)
@@ -476,6 +491,47 @@ function DayPage() {
     setRoutine({ detail: d, steps, index: 0, stepStartedAt: Date.now() })
   }
 
+  // Records one stretch of a routine as a block under its parent (process_id),
+  // on the 6am to 6am day it started. Under a minute isn't kept.
+  const recordSegment = async (name: string, startMs: number, endMs: number) => {
+    if (!routine || endMs - startMs < 60_000) return
+    const begin = logicalNow(new Date(startMs))
+    const finish = logicalNow(new Date(endMs))
+    const endHours = finish.day === begin.day ? finish.hours : finish.hours + 24
+    const { error } = await supabase.from('cass_time_blocks').insert({
+      ...toStored(begin.day, begin.hours, endHours),
+      title: name,
+      kind: 'personal',
+      source: 'routine',
+      process_id: routine.detail.id,
+      process_role: 'member',
+      done: true,
+      done_at: new Date(endMs).toISOString(),
+    })
+    if (error) setError(error.message)
+  }
+
+  // Loads a block's recorded routine steps when its card opens
+  useEffect(() => {
+    setDetailParts([])
+    if (!detail) return
+    supabase
+      .from('cass_time_blocks')
+      .select('id,title,day,start_time,end_time')
+      .eq('process_id', detail.id)
+      .order('day')
+      .order('start_time')
+      .then(({ data, error }) => {
+        if (error) return setError(error.message)
+        setDetailParts(
+          (data ?? []).map((b) => {
+            const { start, end } = fromStored(b.day, b.start_time, b.end_time)
+            return { id: b.id, title: b.title, start, end }
+          }),
+        )
+      })
+  }, [detail?.id])
+
   // A Help option tracks on today's agenda: a block starting now, with the todos
   // and habits not finished pushed after it (interruptPlan). Then show it.
   const trackHelp = async (name: string, option: string) => {
@@ -623,6 +679,7 @@ function DayPage() {
               onDoneNow={doneNow}
               onDoneAtEnd={doneAtScheduledEnd}
               onStartRoutine={startRoutine}
+              parts={detailParts}
             />
           ) : null}
         </Pressable>
@@ -632,6 +689,20 @@ function DayPage() {
         {routine ? (
           <RoutineTimer
             run={routine}
+            routine={ROUTINES[routine.detail.title] ?? []}
+            onSwitch={(choice, index) =>
+              setRoutine((r) =>
+                r
+                  ? {
+                      ...r,
+                      steps: switchRoutine(ROUTINES[r.detail.title] ?? [], r.steps, index, choice),
+                      index: 0,
+                      stepStartedAt: Date.now(),
+                    }
+                  : r,
+              )
+            }
+            onSegment={recordSegment}
             onChange={(index, stepStartedAt) => setRoutine((r) => (r ? { ...r, index, stepStartedAt } : r))}
             onChoresDone={() => doneNow(routine.detail)}
             onClose={() => setRoutine(null)}
@@ -1124,6 +1195,7 @@ function DetailCard({
   onDoneNow,
   onDoneAtEnd,
   onStartRoutine,
+  parts,
 }: {
   detail: Detail
   today: string
@@ -1132,6 +1204,8 @@ function DetailCard({
   onDoneNow: (detail: Detail) => void
   onDoneAtEnd: (detail: Detail) => void
   onStartRoutine: (detail: Detail, step: string) => void
+  // Recorded routine steps under this block
+  parts: { id: string; title: string; start: number; end: number }[]
 }) {
   const routineSteps = (ROUTINES[detail.title] ?? []).filter((step) => step.minutes !== null)
   const saved = Math.round((detail.end - detail.start) * 60)
@@ -1226,6 +1300,20 @@ function DetailCard({
           </Pressable>
         </View>
       )}
+
+      {parts.length ? (
+        <View style={styles.parts}>
+          <Text style={styles.sectionLabel}>ACTIVITY</Text>
+          {parts.map((p) => (
+            <View key={p.id} style={styles.partRow}>
+              <Text style={[styles.todoText, { flex: 1 }]}>{p.title}</Text>
+              <Text style={styles.minutesLabel}>
+                {clock(p.start)} · {Math.round((p.end - p.start) * 60)} min
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -1237,23 +1325,35 @@ function mmss(ms: number) {
 }
 
 // The full-page routine timer. Each step counts down and moves on by itself; a
-// step with no minutes (Puzzles) counts up. Reaching the first such step means
-// the chores are finished, which marks the habit done once.
+// step with no minutes counts up. Reaching the routine's own counting-up step
+// (Puzzles, not a typed one-off) means the chores are finished, which marks the
+// habit done once. Every stretch is handed to onSegment for the calendar.
 function RoutineTimer({
   run,
+  routine,
   onChange,
+  onSwitch,
+  onSegment,
   onChoresDone,
   onClose,
 }: {
   run: { steps: RoutineStep[]; index: number; stepStartedAt: number }
+  // The whole routine, for Switch!
+  routine: RoutineStep[]
   onChange: (index: number, stepStartedAt: number) => void
+  onSwitch: (choice: { step: string } | { oneOff: string }, index: number) => void
+  onSegment: (name: string, startMs: number, endMs: number) => void
   onChoresDone: () => void
   onClose: () => void
 }) {
   const [now, setNow] = useState(Date.now())
   // When the current step was paused; while set, the clock holds at that moment
   const [pausedAt, setPausedAt] = useState<number | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [oneOff, setOneOff] = useState('')
   const markedDone = useRef(false)
+  // When the current step really began, for its calendar record
+  const stepBegan = useRef(run.stepStartedAt)
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 500)
     return () => clearInterval(id)
@@ -1263,24 +1363,59 @@ function RoutineTimer({
   const step = run.steps[state.index]
   const next = run.steps[state.index + 1]
 
+  // Steps whose time ran out (several if the phone was locked) are recorded at
+  // their scheduled ends, then the timer moves on
   useEffect(() => {
-    if (state.index !== run.index) onChange(state.index, state.stepStartedAt)
-    if (!markedDone.current && step.minutes === null) {
+    if (state.index === run.index) return
+    let boundary = run.stepStartedAt
+    for (let k = run.index; k < state.index; k++) {
+      boundary += (run.steps[k].minutes ?? 0) * 60_000
+      onSegment(run.steps[k].name, stepBegan.current, boundary)
+      stepBegan.current = boundary
+    }
+    onChange(state.index, state.stepStartedAt)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.index])
+
+  useEffect(() => {
+    if (!markedDone.current && step.minutes === null && !step.oneOff) {
       markedDone.current = true
       onChoresDone()
     }
-  }, [state.index, state.stepStartedAt, run.index, step.minutes, onChange, onChoresDone])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.index, step])
+
+  // Ends the current step now and records it
+  const endCurrent = () => {
+    const at = Date.now()
+    onSegment(step.name, stepBegan.current, at)
+    stepBegan.current = at
+  }
 
   const goNext = () => {
+    endCurrent()
     setPausedAt(null)
     if (next) onChange(state.index + 1, Date.now())
     else onClose()
+  }
+
+  const stop = () => {
+    endCurrent()
+    onClose()
   }
 
   const togglePause = () => {
     if (pausedAt === null) return setPausedAt(Date.now())
     onChange(state.index, resumeTimer(state.stepStartedAt, pausedAt, Date.now()))
     setPausedAt(null)
+  }
+
+  const switchTo = (choice: { step: string } | { oneOff: string }) => {
+    endCurrent()
+    setPausedAt(null)
+    setSwitching(false)
+    setOneOff('')
+    onSwitch(choice, state.index)
   }
 
   return (
@@ -1296,10 +1431,50 @@ function RoutineTimer({
         <Pressable style={[styles.submitButton, styles.timerButton]} onPress={goNext}>
           <Text style={styles.doneButtonText}>{next ? 'Next' : 'Done'}</Text>
         </Pressable>
-        <Pressable style={[styles.timerButton, styles.timerStop]} onPress={onClose}>
+        <Pressable style={[styles.timerButton, styles.timerStop]} onPress={stop}>
           <Text style={styles.timerStopText}>Stop</Text>
         </Pressable>
+        <Pressable style={[styles.timerButton, styles.timerStop]} onPress={() => setSwitching(true)}>
+          <Text style={styles.timerStopText}>Switch!</Text>
+        </Pressable>
       </View>
+
+      <Modal visible={switching} transparent animationType="none" onRequestClose={() => setSwitching(false)}>
+        <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.detailBackdrop} onPress={() => setSwitching(false)}>
+            <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+              <Text style={styles.detailTitle}>Switch to</Text>
+              {routine.map((r) => (
+                <Pressable
+                  key={r.name}
+                  style={[styles.timerStop, r.name === step.name && styles.segmentItemActive]}
+                  onPress={() => switchTo({ step: r.name })}
+                >
+                  <Text style={[styles.timerStopText, r.name === step.name && styles.segmentTextActive]}>{r.name}</Text>
+                </Pressable>
+              ))}
+              <View style={styles.oneOffRow}>
+                <TextInput
+                  style={[styles.input, styles.oneOffInput]}
+                  value={oneOff}
+                  onChangeText={setOneOff}
+                  placeholder="Something else, just this once"
+                  placeholderTextColor={c.muted}
+                  returnKeyType="go"
+                  onSubmitEditing={() => oneOff.trim() && switchTo({ oneOff: oneOff.trim() })}
+                />
+                <Pressable
+                  style={[styles.submitButton, styles.oneOffStart, !oneOff.trim() && styles.buttonDisabled]}
+                  disabled={!oneOff.trim()}
+                  onPress={() => switchTo({ oneOff: oneOff.trim() })}
+                >
+                  <Text style={[styles.doneButtonText, !oneOff.trim() && styles.buttonDisabledText]}>Start</Text>
+                </Pressable>
+              </View>
+            </View>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -1497,7 +1672,8 @@ function DayGrid({
   const last = showNow ? Math.min(LAST_HOUR, Math.ceil(nowHours + LOOKAHEAD_HOURS)) : LAST_HOUR
   const hours = useMemo(() => Array.from({ length: last - first }, (_, i) => first + i), [first, last])
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
-  const visible = items.filter((it) => it.end > first && it.start < last)
+  // Routine steps are listed on their parent's card, not drawn on the grid
+  const visible = items.filter((it) => !it.processId && it.end > first && it.start < last)
 
   // Blocks under 30 minutes, and blocks done early, take half the column. A block
   // that a half block's minimum height spills into takes the other half.
@@ -1711,6 +1887,11 @@ const styles = StyleSheet.create({
   timerStop: { alignItems: 'center', paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: c.line },
   timerStopText: { fontSize: 16, fontWeight: '600', color: c.ink },
   timerPause: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
+  oneOffRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  oneOffInput: { flex: 1 },
+  oneOffStart: { marginTop: 0, paddingHorizontal: 16 },
+  parts: { marginTop: 4 },
+  partRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },

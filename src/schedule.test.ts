@@ -25,6 +25,7 @@ import {
   resumeTimer,
   habitHistory,
   routineFrom,
+  switchRoutine,
   interruptPlan,
   habitsForDay,
   habitSearchFrom,
@@ -268,6 +269,38 @@ test('resumeTimer shifts the step start by the paused stretch, so the time left 
   assert.equal(start, t0 + 10 * min)
   const after = advanceTimer(steps, 0, start, resumedAt)
   assert.deepEqual([after.index, after.remainingMs], [0, 3 * min])
+})
+
+test('switchRoutine jumps to a routine step and runs on from it', () => {
+  const routine = [
+    { name: 'Dishwasher', minutes: 5 },
+    { name: 'Empty sink', minutes: 5 },
+    { name: 'Wet food', minutes: 5 },
+    { name: 'Puzzles', minutes: null },
+  ]
+  const running = routineFrom(routine, 'Dishwasher')
+  assert.deepEqual(switchRoutine(routine, running, 0, { step: 'Wet food' }).map((s) => s.name), ['Wet food', 'Puzzles'])
+  // Back to an earlier one works too
+  assert.deepEqual(switchRoutine(routine, running.slice(2), 0, { step: 'Empty sink' }).map((s) => s.name), [
+    'Empty sink',
+    'Wet food',
+    'Puzzles',
+  ])
+})
+
+test('switchRoutine puts a one-off in now, counting up, then back to the step it interrupted', () => {
+  const routine = [
+    { name: 'Dishwasher', minutes: 5 },
+    { name: 'Empty sink', minutes: 5 },
+    { name: 'Puzzles', minutes: null },
+  ]
+  const running = routineFrom(routine, 'Dishwasher')
+  const next = switchRoutine(routine, running, 1, { oneOff: 'Reply to Mehran' })
+  assert.deepEqual(next, [
+    { name: 'Reply to Mehran', minutes: null, oneOff: true },
+    { name: 'Empty sink', minutes: 5 },
+    { name: 'Puzzles', minutes: null },
+  ])
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
