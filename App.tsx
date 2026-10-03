@@ -62,6 +62,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   advanceTimer,
+  extendStep,
   habitHistory,
   resumeTimer,
   routineFrom,
@@ -762,8 +763,8 @@ const ROUTINES: Record<string, RoutineStep[]> = {
     { name: 'Dishwasher', minutes: 5 },
     { name: 'Empty sink', minutes: 5 },
     { name: 'Wet food', minutes: 5 },
-    // Counts up until it's ended
-    { name: 'Puzzles', minutes: null },
+    // Reaching Puzzles means the chores are done
+    { name: 'Puzzles', minutes: 5, afterChores: true },
   ],
 }
 
@@ -1324,10 +1325,9 @@ function mmss(ms: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-// The full-page routine timer. Each step counts down and moves on by itself; a
-// step with no minutes counts up. Reaching the routine's own counting-up step
-// (Puzzles, not a typed one-off) means the chores are finished, which marks the
-// habit done once. Every stretch is handed to onSegment for the calendar.
+// The full-page routine timer. Each step counts down and moves on by itself, and
+// the last one running out ends the run. Reaching the afterChores step (Puzzles)
+// marks the habit done once. Every stretch is handed to onSegment for the calendar.
 function RoutineTimer({
   run,
   routine,
@@ -1398,12 +1398,22 @@ function RoutineTimer({
   }, [state.index])
 
   useEffect(() => {
-    if (!markedDone.current && step.minutes === null && !step.oneOff) {
+    if (!markedDone.current && step.afterChores) {
       markedDone.current = true
       onChoresDone()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.index, step])
+
+  // The last step running out ends the run, the same as tapping Done
+  const finished = useRef(false)
+  useEffect(() => {
+    if (finished.current || next || state.remainingMs !== 0) return
+    finished.current = true
+    onSegment(step.name, stepBegan.current, state.stepStartedAt + (step.minutes ?? 0) * 60_000)
+    onClose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.remainingMs, next])
 
   // Ends the current step now and records it
   const endCurrent = () => {
@@ -1450,10 +1460,20 @@ function RoutineTimer({
         <Text style={styles.timerClock}>{state.remainingMs === null ? mmss(state.elapsedMs) : mmss(state.remainingMs)}</Text>
         <Text style={styles.timerNext}>{pausedAt !== null ? 'Paused' : next ? `Next: ${next.name}` : 'Last one'}</Text>
         <View style={styles.timerButtons}>
-          <Pressable style={[styles.timerStop, styles.timerPause]} onPress={togglePause}>
-            {pausedAt === null ? <Pause size={18} color={c.ink} /> : <Play size={18} color={c.ink} />}
-            <Text style={styles.timerStopText}>{pausedAt === null ? 'Pause' : 'Resume'}</Text>
-          </Pressable>
+          <View style={styles.timerRow}>
+            <Pressable style={[styles.timerStop, styles.timerPause, styles.timerHalf]} onPress={togglePause}>
+              {pausedAt === null ? <Pause size={18} color={c.ink} /> : <Play size={18} color={c.ink} />}
+              <Text style={styles.timerStopText}>{pausedAt === null ? 'Pause' : 'Resume'}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.timerStop, styles.timerHalf, step.minutes === null && styles.buttonDisabled]}
+              disabled={step.minutes === null}
+              onPress={() => onChange(state.index, extendStep(state.stepStartedAt, 1))}
+              accessibilityLabel="Add a minute"
+            >
+              <Text style={[styles.timerStopText, step.minutes === null && styles.buttonDisabledText]}>+1 min</Text>
+            </Pressable>
+          </View>
           <Pressable style={[styles.submitButton, styles.timerButton]} onPress={goNext}>
             <Text style={styles.doneButtonText}>{next ? 'Next' : 'Done'}</Text>
           </Pressable>
@@ -1915,6 +1935,8 @@ const styles = StyleSheet.create({
   timerStop: { alignItems: 'center', paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: c.line },
   timerStopText: { fontSize: 16, fontWeight: '600', color: c.ink },
   timerPause: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
+  timerRow: { flexDirection: 'row', gap: 8 },
+  timerHalf: { flex: 1 },
   oneOffRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   oneOffInput: { flex: 1 },
   oneOffStart: { marginTop: 0, paddingHorizontal: 16 },

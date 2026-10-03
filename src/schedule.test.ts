@@ -22,6 +22,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   advanceTimer,
+  extendStep,
   resumeTimer,
   habitHistory,
   routineFrom,
@@ -288,7 +289,7 @@ test('switchRoutine jumps to a routine step and runs on from it', () => {
   ])
 })
 
-test('switchRoutine puts a one-off in now, counting up, then back to the step it interrupted', () => {
+test('switchRoutine puts a one-off in now, counting down from 5 minutes, then back to the step it interrupted', () => {
   const routine = [
     { name: 'Dishwasher', minutes: 5 },
     { name: 'Empty sink', minutes: 5 },
@@ -297,10 +298,32 @@ test('switchRoutine puts a one-off in now, counting up, then back to the step it
   const running = routineFrom(routine, 'Dishwasher')
   const next = switchRoutine(routine, running, 1, { oneOff: 'Reply to Mehran' })
   assert.deepEqual(next, [
-    { name: 'Reply to Mehran', minutes: null, oneOff: true },
+    { name: 'Reply to Mehran', minutes: 5, oneOff: true },
     { name: 'Empty sink', minutes: 5 },
     { name: 'Puzzles', minutes: null },
   ])
+})
+
+test('extendStep adds a minute to the step that is counting down', () => {
+  const steps = [{ name: 'Dishwasher', minutes: 5 }, { name: 'Puzzles', minutes: null }]
+  const t0 = 1_000_000
+  const min = 60_000
+  // 4 minutes in, 1 left; +1 min makes it 2 left
+  const start = extendStep(t0, 1)
+  assert.deepEqual([advanceTimer(steps, 0, start, t0 + 4 * min).index, advanceTimer(steps, 0, start, t0 + 4 * min).remainingMs], [0, 2 * min])
+  // Without it, 5 minutes in would already be Puzzles; with it, still Dishwasher
+  assert.equal(advanceTimer(steps, 0, start, t0 + 5 * min).index, 0)
+})
+
+test('advanceTimer stays on the last step at 0:00 once it has counted down', () => {
+  const steps = [
+    { name: 'Wet food', minutes: 5 },
+    { name: 'Puzzles', minutes: 5, afterChores: true },
+  ]
+  const t0 = 1_000_000
+  const min = 60_000
+  const end = advanceTimer(steps, 0, t0, t0 + 12 * min)
+  assert.deepEqual([end.index, end.remainingMs], [1, 0])
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

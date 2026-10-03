@@ -497,7 +497,9 @@ export function halfSides(items: CalItem[], top: (hours: number) => number, minP
 
 // A routine is a run of timed steps (the Shut down habit's Dishwasher, Empty sink,
 // Wet food, then Puzzles). A step with no minutes counts up until it's ended.
-export type RoutineStep = { name: string; minutes: number | null; oneOff?: boolean }
+// afterChores marks the step that comes after the chores (Puzzles): reaching it
+// means the habit is done
+export type RoutineStep = { name: string; minutes: number | null; oneOff?: boolean; afterChores?: boolean }
 
 // Starting from a picked step runs that step and every one after it
 export function routineFrom(steps: RoutineStep[], start: string) {
@@ -535,9 +537,13 @@ export function resumeTimer(stepStartedAt: number, pausedAt: number, now: number
   return stepStartedAt + (now - pausedAt)
 }
 
+// How long a typed one-off counts down from
+export const ONE_OFF_MINUTES = 5
+
 // Switch! during a routine. Picking one of the routine's steps jumps to it and
 // runs on from there. A one-off (something typed in, like a missed todo) starts
-// now, counting up, and Next goes back to the step it interrupted, from the top.
+// now, counting down from 5 minutes, then goes back to the step it interrupted,
+// from the top.
 // A one-off exists for this run only.
 export function switchRoutine(
   routine: RoutineStep[],
@@ -546,5 +552,11 @@ export function switchRoutine(
   choice: { step: string } | { oneOff: string },
 ): RoutineStep[] {
   if ('step' in choice) return routineFrom(routine, choice.step)
-  return [{ name: choice.oneOff, minutes: null, oneOff: true }, ...running.slice(index).filter((s) => !s.oneOff)]
+  return [{ name: choice.oneOff, minutes: ONE_OFF_MINUTES, oneOff: true }, ...running.slice(index).filter((s) => !s.oneOff)]
+}
+
+// +1 min on the step counting down: its start moves a minute later, so a minute
+// more is left
+export function extendStep(stepStartedAt: number, minutes: number) {
+  return stepStartedAt + minutes * 60_000
 }
