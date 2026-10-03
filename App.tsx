@@ -551,14 +551,20 @@ function DayPage() {
   }, [detail?.id])
 
   // A todo added at a tapped time; the todos and habits from there on move along
-  // behind it (insertAtPlan)
-  const addTodoAt = async (title: string, start: number, minutes: number) => {
+  // behind it (insertAtPlan). Mark as Done adds it already done, stamped at its end.
+  const addTodoAt = async (title: string, start: number, minutes: number, done: boolean) => {
     setAddAt(null)
     const plan = insertAtPlan(items, start, minutes / 60)
     if ('error' in plan) return setError(plan.error)
     const { error } = await supabase
       .from('cass_time_blocks')
-      .insert({ ...toStored(day, plan.start, plan.end), title, kind: 'personal', source: 'app' })
+      .insert({
+        ...toStored(day, plan.start, plan.end),
+        ...(done ? doneAtEnd(day, plan.start, plan.end) : {}),
+        title,
+        kind: 'personal',
+        source: 'app',
+      })
     if (error) return setError(error.message)
     await saveMoves(plan.moves)
   }
@@ -745,7 +751,9 @@ function DayPage() {
       <Modal visible={addAt !== null} transparent animationType="none" onRequestClose={() => setAddAt(null)}>
         <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable style={styles.detailBackdrop} onPress={() => setAddAt(null)}>
-            {addAt !== null ? <AddTodoCard at={addAt} onSave={(title, minutes) => addTodoAt(title, addAt, minutes)} /> : null}
+            {addAt !== null ? (
+              <AddTodoCard at={addAt} onSave={(title, minutes, done) => addTodoAt(title, addAt, minutes, done)} />
+            ) : null}
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
@@ -1035,7 +1043,13 @@ function HabitsScreen({
 }
 
 // A todo added at a tapped time on the agenda: name and length
-function AddTodoCard({ at, onSave }: { at: number; onSave: (title: string, minutes: number) => void }) {
+function AddTodoCard({
+  at,
+  onSave,
+}: {
+  at: number
+  onSave: (title: string, minutes: number, done: boolean) => void
+}) {
   const [title, setTitle] = useState('')
   const [minutes, setMinutes] = useState(60)
   const ready = title.trim().length > 0
@@ -1052,7 +1066,7 @@ function AddTodoCard({ at, onSave }: { at: number; onSave: (title: string, minut
         placeholderTextColor={c.muted}
         autoFocus
         returnKeyType="done"
-        onSubmitEditing={() => ready && onSave(title.trim(), minutes)}
+        onSubmitEditing={() => ready && onSave(title.trim(), minutes, false)}
       />
       <View style={styles.sliderRow}>
         <Text style={styles.sliderLabel}>Length</Text>
@@ -1073,13 +1087,22 @@ function AddTodoCard({ at, onSave }: { at: number; onSave: (title: string, minut
           })}
         </View>
       </View>
-      <Pressable
-        style={[styles.submitButton, !ready && styles.buttonDisabled]}
-        disabled={!ready}
-        onPress={() => onSave(title.trim(), minutes)}
-      >
-        <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add todo</Text>
-      </Pressable>
+      <View style={styles.doneRow}>
+        <Pressable
+          style={[styles.doneButton, !ready && styles.buttonDisabled]}
+          disabled={!ready}
+          onPress={() => onSave(title.trim(), minutes, false)}
+        >
+          <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.doneButton, !ready && styles.buttonDisabled]}
+          disabled={!ready}
+          onPress={() => onSave(title.trim(), minutes, true)}
+        >
+          <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Mark as Done</Text>
+        </Pressable>
+      </View>
     </View>
   )
 }
