@@ -213,6 +213,8 @@ type Detail = {
   done: boolean
   // A set-time habit: the card shows its time in place of the start slider
   fixed: boolean
+  // An event: no done buttons
+  event: boolean
 }
 
 function DayPage() {
@@ -678,7 +680,7 @@ function DayPage() {
 
             {tab === 'todos' ? (
               <View style={styles.card}>
-                <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed })} />
+                <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false })} />
                 <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
                   <TextInput
                     style={styles.addInput}
@@ -699,7 +701,7 @@ function DayPage() {
                 items={items}
                 showNow={day === today}
                 onMore={(item, x, y) => setMenu({ item, x, y })}
-                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
+                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed, event: item.source === 'event' })}
                 onAddAt={setAddAt}
               />
             )}
@@ -1469,7 +1471,7 @@ function DetailCard({
         </View>
       ) : null}
 
-      {detail.done ? null : (
+      {detail.done || detail.event ? null : (
         <View style={styles.doneRow}>
           <Pressable style={styles.doneButton} onPress={() => onDoneNow(detail)}>
             <Text style={styles.doneButtonText}>Done now</Text>
@@ -1959,13 +1961,15 @@ function DayGrid({
                 {clock(it.start)}–{clock(it.end)}
               </Text>
             )}
-            <Pressable
-              style={[styles.more, compact && styles.moreShort]}
-              hitSlop={10}
-              onPress={(e) => onMore(it, e.nativeEvent.pageX, e.nativeEvent.pageY)}
-            >
-              <MoreHorizontal size={compact ? 16 : 18} color={dark ? c.onDark : c.ink} />
-            </Pressable>
+            {it.source === 'event' ? null : (
+              <Pressable
+                style={[styles.more, compact && styles.moreShort]}
+                hitSlop={10}
+                onPress={(e) => onMore(it, e.nativeEvent.pageX, e.nativeEvent.pageY)}
+              >
+                <MoreHorizontal size={compact ? 16 : 18} color={dark ? c.onDark : c.ink} />
+              </Pressable>
+            )}
           </Pressable>
         )
       })}

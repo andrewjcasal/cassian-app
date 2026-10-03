@@ -489,6 +489,8 @@ export function relayout(allBefore: Todo[], allAfter: Todo[]) {
 // shows only once its end has passed (any earlier day counts). Add follow-up
 // hides while the block is under way.
 export function menuOptions(item: CalItem, day: string, today: string, now: number) {
+  // An event is an appointment: no done state, no follow-up, never moved
+  if (item.source === 'event') return []
   const isToday = day === today
   const inProgress = isToday && item.start <= now && now < item.end
   const ended = day < today || (isToday && item.end <= now)

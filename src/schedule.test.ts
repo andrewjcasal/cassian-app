@@ -370,7 +370,9 @@ test('An event is never moved: rules only carry todos and habits', () => {
   assert.ok(!ids(startNowPlan(items, washer, at(16, 30))).includes('dentist'))
   assert.ok(!ids(resizeItemPlan(items, washer, 120)).includes('dentist'))
   assert.ok(!ids(insertAtPlan(items, 16, 1)).includes('dentist'))
-  assert.deepEqual(menuOptions(event, DAY, DAY, at(17, 30)).map(([k]) => k), ['done'])
+  // An event has no done state and no follow-up, so its menu is empty
+  assert.deepEqual(menuOptions(event, DAY, DAY, at(17, 30)), [])
+  assert.deepEqual(menuOptions(event, DAY, DAY, at(19, 0)), [])
 })
 
 test('An event pushes off every todo and habit it overlaps, even one that started earlier', () => {
