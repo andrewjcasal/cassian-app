@@ -27,10 +27,12 @@ import {
   habitHistory,
   routineFrom,
   switchRoutine,
+  insertAtPlan,
   interruptPlan,
   habitsForDay,
   habitSearchFrom,
   placeHabits,
+  quarterOf,
   relayout,
   resizeItemPlan,
   resizePlan,
@@ -324,6 +326,29 @@ test('advanceTimer stays on the last step at 0:00 once it has counted down', () 
   const min = 60_000
   const end = advanceTimer(steps, 0, t0, t0 + 12 * min)
   assert.deepEqual([end.index, end.remainingMs], [1, 0])
+})
+
+test('insertAtPlan puts a todo at the tapped time and pushes the todos and habits from there on', () => {
+  const items = [
+    block('earlier', 14, 15),
+    block('washer', 16, 17),
+    block('skool', 17, at(17, 15), { source: 'habit', habitId: 'h1' }),
+    block('shutdown', 23, at(23, 15), { source: 'habit', fixed: true }),
+    block('later', 20, 21),
+  ]
+  const plan = insertAtPlan(items, 16, 1)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual([plan.start, plan.end], [16, 17])
+  // washer and skool follow on; later at 8pm already clears, earlier and Shut down stay
+  assert.deepEqual(fmt(plan.moves), ['washer@17:00-18:00', 'skool@18:00-18:15'])
+  assert.ok('error' in insertAtPlan([], at(25, 30), 1))
+})
+
+test('quarterOf rounds a tapped time to the nearest quarter hour', () => {
+  assert.equal(quarterOf(at(16, 7)), 16)
+  assert.equal(quarterOf(at(16, 8)), at(16, 15))
+  assert.equal(quarterOf(at(16, 52)), at(16, 45))
+  assert.equal(quarterOf(at(16, 53)), 17)
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

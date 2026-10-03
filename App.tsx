@@ -68,10 +68,12 @@ import {
   routineFrom,
   switchRoutine,
   type RoutineStep,
+  insertAtPlan,
   interruptPlan,
   habitsForDay,
   habitSearchFrom,
   placeHabits,
+  quarterOf,
   relayout,
   resizeItemPlan,
   resizePlan,
@@ -83,7 +85,8 @@ import {
 const HOUR_PX = 80
 const FIRST_HOUR = 6
 const EVENT_LEFT = 52
-const EVENT_RIGHT = 6
+// Cards stop this far from the right; tapping that strip adds a todo at that time
+const EVENT_RIGHT = 30
 // A short block is at least this tall so its title stays readable
 const SHORT_MIN_PX = 20
 // Today's grid shows this many hours before and after now
@@ -226,6 +229,8 @@ function DayPage() {
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  // The time tapped in the agenda's right strip, for a new todo there
+  const [addAt, setAddAt] = useState<number | null>(null)
   // The routine timer that's running, if any (full page)
   const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
   // A routine block's recorded steps, shown on its card under the done buttons
@@ -533,6 +538,19 @@ function DayPage() {
       })
   }, [detail?.id])
 
+  // A todo added at a tapped time; the todos and habits from there on move along
+  // behind it (insertAtPlan)
+  const addTodoAt = async (title: string, start: number, minutes: number) => {
+    setAddAt(null)
+    const plan = insertAtPlan(items, start, minutes / 60)
+    if ('error' in plan) return setError(plan.error)
+    const { error } = await supabase
+      .from('cass_time_blocks')
+      .insert({ ...toStored(day, plan.start, plan.end), title, kind: 'personal', source: 'app' })
+    if (error) return setError(error.message)
+    await saveMoves(plan.moves)
+  }
+
   // A Help option tracks on today's agenda: a block starting now, with the todos
   // and habits not finished pushed after it (interruptPlan). Then show it.
   const trackHelp = async (name: string, option: string) => {
@@ -623,6 +641,7 @@ function DayPage() {
               showNow={day === today}
               onMore={(item, x, y) => setMenu({ item, x, y })}
               onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed })}
+              onAddAt={setAddAt}
             />
           )}
 
@@ -709,6 +728,14 @@ function DayPage() {
             onClose={() => setRoutine(null)}
           />
         ) : null}
+      </Modal>
+
+      <Modal visible={addAt !== null} transparent animationType="none" onRequestClose={() => setAddAt(null)}>
+        <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.detailBackdrop} onPress={() => setAddAt(null)}>
+            {addAt !== null ? <AddTodoCard at={addAt} onSave={(title, minutes) => addTodoAt(title, addAt, minutes)} /> : null}
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal visible={settingsMenu !== null} transparent animationType="none" onRequestClose={() => setSettingsMenu(null)}>
@@ -992,6 +1019,56 @@ function HabitsScreen({
         </Pressable>
       </Modal>
     </>
+  )
+}
+
+// A todo added at a tapped time on the agenda: name and length
+function AddTodoCard({ at, onSave }: { at: number; onSave: (title: string, minutes: number) => void }) {
+  const [title, setTitle] = useState('')
+  const [minutes, setMinutes] = useState(60)
+  const ready = title.trim().length > 0
+
+  return (
+    // Claims taps on the card so only the backdrop closes it
+    <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+      <Text style={styles.detailTitle}>New todo at {clock(at)}</Text>
+      <TextInput
+        style={styles.input}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Name"
+        placeholderTextColor={c.muted}
+        autoFocus
+        returnKeyType="done"
+        onSubmitEditing={() => ready && onSave(title.trim(), minutes)}
+      />
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Length</Text>
+        <View style={styles.durations}>
+          {durationOptions(minutes).map((m) => {
+            const active = m === minutes
+            return (
+              <Pressable
+                key={m}
+                style={[styles.duration, active && styles.durationSelected]}
+                onPress={() => setMinutes(m)}
+                accessibilityLabel={`${m} minutes`}
+                accessibilityState={{ selected: active }}
+              >
+                <Text style={[styles.durationText, active && styles.durationTextSelected]}>{m}</Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      </View>
+      <Pressable
+        style={[styles.submitButton, !ready && styles.buttonDisabled]}
+        disabled={!ready}
+        onPress={() => onSave(title.trim(), minutes)}
+      >
+        <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add todo</Text>
+      </Pressable>
+    </View>
   )
 }
 
@@ -1708,11 +1785,14 @@ function DayGrid({
   showNow,
   onMore,
   onOpen,
+  onAddAt,
 }: {
   items: CalItem[]
   showNow: boolean
   onMore: (item: CalItem, x: number, y: number) => void
   onOpen: (item: CalItem) => void
+  // A tap in the strip right of the cards, as an hour rounded to the quarter
+  onAddAt: (hour: number) => void
 }) {
   const nowHours = logicalNow(new Date()).hours
   const first = showNow ? Math.max(0, Math.floor(nowHours - LOOKBACK_HOURS)) : FIRST_HOUR
@@ -1780,7 +1860,12 @@ function DayGrid({
           </Pressable>
         )
       })}
-      {showNow ? <View style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
+      <Pressable
+        style={styles.addStrip}
+        onPress={(e) => onAddAt(quarterOf(first + e.nativeEvent.locationY / HOUR_PX))}
+        accessibilityLabel="Add a todo at this time"
+      />
+      {showNow ? <View pointerEvents="none" style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
 }
@@ -1943,6 +2028,15 @@ const styles = StyleSheet.create({
   parts: { marginTop: 4 },
   partRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   menuText: { fontSize: 16, color: c.ink },
+  addStrip: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: EVENT_RIGHT,
+    borderLeftWidth: 1,
+    borderLeftColor: c.line,
+  },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
   button: { backgroundColor: c.accent, borderRadius: 8, padding: 12, alignItems: 'center' },

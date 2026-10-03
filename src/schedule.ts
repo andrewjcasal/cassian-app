@@ -380,6 +380,35 @@ export function interruptPlan(
   return { start, end, moves }
 }
 
+// A tapped time on the agenda, rounded to the nearest quarter hour
+export function quarterOf(hours: number) {
+  return Math.round(hours * 4) / 4
+}
+
+// A new todo put at a tapped time: the todos and habits starting from there on
+// are pushed along after it as far as they overlap. Ones before it, fixed habits
+// and older calendar blocks stay put.
+export function insertAtPlan(
+  items: CalItem[],
+  start: number,
+  length: number,
+): { start: number; end: number; moves: Move[] } | { error: string } {
+  const end = start + length
+  const later = items
+    .filter(
+      (it) =>
+        it.kind === 'block' &&
+        !it.done &&
+        !it.fixed &&
+        (it.source === 'app' || it.source === 'habit') &&
+        it.start >= start - EPS,
+    )
+    .map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
+  const moves = pushFrom(later, end)
+  if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
+  return { start, end, moves }
+}
+
 // A block moved to start at `newStart`, same length. Blocks it now overlaps from
 // there on are pushed along after it; blocks before it, and blocks after a gap,
 // stay put.
