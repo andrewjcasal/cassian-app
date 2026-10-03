@@ -217,16 +217,17 @@ function DayPage() {
   const today = logicalNow(new Date()).day
   const [day, setDay] = useState(today)
   const [tab, setTab] = useState<Tab>('agenda')
-  // Blocks are kept with the day they were loaded for, so switching days shows an
-  // empty grid until the new day arrives, never the previous day's blocks
-  const [loaded, setLoaded] = useState<{ day: string; items: CalItem[] }>({ day: '', items: [] })
-  const items = loaded.day === day ? loaded.items : []
-  // Only the latest load may write, so a slow response for a day you've already
-  // left can't land on top of the one you're looking at
-  const latestLoad = useRef(0)
-  // Todos are kept with the day they were loaded for, like blocks
-  const [todosFor, setTodosFor] = useState<{ day: string; list: Todo[] }>({ day: '', list: [] })
-  const todos = todosFor.day === day ? todosFor.list : []
+  // Every day's blocks and todos once loaded, so switching to a day shows it at
+  // once while a refresh runs behind it. A day not loaded yet shows empty, never
+  // another day's blocks.
+  const [byDay, setByDay] = useState<Record<string, { items: CalItem[]; todos: Todo[] }>>({})
+  const items = byDay[day]?.items ?? []
+  const todos = byDay[day]?.todos ?? []
+  // Per day, only the latest load may write, so a slow older response can't land
+  // on top of a newer one
+  const loadRuns = useRef(new Map<string, number>())
+  // Days already fetched at least once, so neighbors are prefetched only once
+  const fetchedDays = useRef(new Set<string>())
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -250,7 +251,8 @@ function DayPage() {
   const [dragging, setDragging] = useState(false)
   // Where the settings icon was tapped, so its menu opens beside it
   const [settingsMenu, setSettingsMenu] = useState<{ x: number; y: number } | null>(null)
-  const [loading, setLoading] = useState(false)
+  // Only pull to refresh shows the spinner; every other load happens quietly
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
 
@@ -295,14 +297,12 @@ function DayPage() {
     return [...blocks, ...tasks].sort((a, b) => a.start - b.start)
   }, [])
 
-  const fetchItems = useCallback(() => fetchDayItems(day), [day, fetchDayItems])
-
   // Today, every habit without a block yet goes into the first gap that fits it.
   // The (habit_id, logical_day) unique index keeps a racing load from placing one
   // twice; logical_day is the 6am to 6am day, so a habit after midnight still counts
   // for the night before.
   const placeHabitBlocks = useCallback(
-    async (current: CalItem[]) => {
+    async (current: CalItem[], day: string) => {
       const { data: habits, error } = await supabase
         .from('cass_habits')
         .select('id,title,minutes,frequency,weekday,start_time')
@@ -327,45 +327,62 @@ function DayPage() {
       }
       return placements.length > 0
     },
-    [day, today],
+    [today],
   )
 
-  const load = useCallback(async () => {
-    const run = ++latestLoad.current
-    setLoading(true)
-    setError(null)
-    let current = await fetchItems()
-    if (run !== latestLoad.current) return
-    if (day >= today && (await placeHabitBlocks(current))) current = await fetchItems()
-    if (run !== latestLoad.current) return
-    // After habits are placed, so a day's first visit lists them
-    const todoRes = await supabase
-      .from('cass_time_blocks')
-      .select('id,title,day,start_time,end_time,habit_id,cass_habits(start_time)')
-      .in('source', ['app', 'habit'])
-      .eq('done', false)
-      .order('day')
-      .order('start_time')
-    if (todoRes.error) setError(todoRes.error.message)
-    if (run !== latestLoad.current) return
-    setLoaded({ day, items: current })
-    setTodosFor({
-      day,
-      // Only the day being shown, by its 6am to 6am day
-      list: (todoRes.data ?? [])
-        .map((t) => {
-          const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
-          const fixed = hasSetTime(t.cass_habits)
-          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, fixed }
-        })
-        .filter((t) => t.day === day),
-    })
-    setLoading(false)
-  }, [day, today, fetchItems, placeHabitBlocks])
+  // Loads one day: its blocks (placing its habits first if it's today or later)
+  // and its unfinished todos, into byDay
+  const loadDay = useCallback(
+    async (d: string) => {
+      const run = (loadRuns.current.get(d) ?? 0) + 1
+      loadRuns.current.set(d, run)
+      fetchedDays.current.add(d)
+      let current = await fetchDayItems(d)
+      if (d >= today && (await placeHabitBlocks(current, d))) current = await fetchDayItems(d)
+      // After habits are placed, so a day's first visit lists them
+      const todoRes = await supabase
+        .from('cass_time_blocks')
+        .select('id,title,day,start_time,end_time,habit_id,cass_habits(start_time)')
+        .in('source', ['app', 'habit'])
+        .eq('done', false)
+        .eq('logical_day', d)
+        .order('day')
+        .order('start_time')
+      if (todoRes.error) setError(todoRes.error.message)
+      if (loadRuns.current.get(d) !== run) return
+      const dayTodos = (todoRes.data ?? []).map((t) => {
+        const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
+        return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, fixed: hasSetTime(t.cass_habits) }
+      })
+      setByDay((prev) => ({ ...prev, [d]: { items: current, todos: dayTodos } }))
+    },
+    [today, fetchDayItems, placeHabitBlocks],
+  )
 
+  // Reloads the day being shown (after a save)
+  const load = useCallback(() => loadDay(day), [day, loadDay])
+
+  const pullToRefresh = async () => {
+    setRefreshing(true)
+    setError(null)
+    await loadDay(day)
+    setRefreshing(false)
+  }
+
+  // Today and yesterday are fetched as soon as the app opens
   useEffect(() => {
-    load()
-  }, [load])
+    loadDay(today)
+    loadDay(shiftDay(today, -1))
+  }, [today, loadDay])
+
+  // The day being shown refreshes, and the days either side are fetched once so
+  // the arrows and swipes land on a day that's already there
+  useEffect(() => {
+    loadDay(day)
+    for (const neighbor of [shiftDay(day, -1), shiftDay(day, 1)]) {
+      if (!fetchedDays.current.has(neighbor)) loadDay(neighbor)
+    }
+  }, [day, loadDay])
 
   // Saves new times for every moved block, then reloads. Times are hours into
   // `dayOf(id)` (the viewed day unless said otherwise), so one past midnight is
@@ -593,7 +610,8 @@ function DayPage() {
     const updates = relayout(todos, next)
     if (!updates.length) return
     const moved = new Map(updates.map((u) => [u.id, u]))
-    setTodosFor({ day, list: next.map((t) => ({ ...t, ...(moved.get(t.id) ?? {}) })) })
+    const list = next.map((t) => ({ ...t, ...(moved.get(t.id) ?? {}) }))
+    setByDay((prev) => ({ ...prev, [day]: { items: prev[day]?.items ?? [], todos: list } }))
     const dayById = new Map(todos.map((t) => [t.id, t.day]))
     await saveMoves(
       updates.map((u) => ({ ...u, kind: 'block' as const })),
@@ -631,7 +649,7 @@ function DayPage() {
           scrollEnabled={!dragging}
           contentContainerStyle={styles.page}
           keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pullToRefresh} />}
         >
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
