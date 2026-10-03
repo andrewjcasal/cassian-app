@@ -231,17 +231,21 @@ export function habitHistory(
 // it, looking from `from`. Each placement counts as taken for the next.
 export function placeHabits(
   items: CalItem[],
-  habits: { id: string; title: string; minutes: number }[],
+  // `start` is a set time of day (hours) for habits like Shut down at 11pm
+  habits: { id: string; title: string; minutes: number; start?: number | null }[],
   from: number,
 ) {
   const placed = new Set(items.map((it) => it.habitId).filter(Boolean))
   const occupied = [...items]
   const out: { habitId: string; title: string; start: number; end: number }[] = []
-  for (const h of habits) {
+  // Set-time habits go first, at their time even if it has passed, so the rest
+  // fill the gaps around them
+  const ordered = [...habits.filter((h) => h.start != null), ...habits.filter((h) => h.start == null)]
+  for (const h of ordered) {
     if (placed.has(h.id)) continue
     const length = h.minutes / 60
-    const start = freeSlot(occupied, from, length)
-    if (start === null) continue
+    const start = h.start != null ? h.start : freeSlot(occupied, from, length)
+    if (start === null || start + length > DAY_END + EPS) continue
     out.push({ habitId: h.id, title: h.title, start, end: start + length })
     occupied.push({ id: h.id, title: h.title, start, end: start + length, kind: 'block', done: false, habitId: h.id })
   }
@@ -477,4 +481,38 @@ export function halfSides(items: CalItem[], top: (hours: number) => number, minP
     prev = { bottom: Math.max(t + minPx, top(it.end) - 1), side: s }
   }
   return side
+}
+
+// A routine is a run of timed steps (the Shut down habit's Dishwasher, Empty sink,
+// Wet food, then Puzzles). A step with no minutes counts up until it's ended.
+export type RoutineStep = { name: string; minutes: number | null }
+
+// Starting from a picked step runs that step and every one after it
+export function routineFrom(steps: RoutineStep[], start: string) {
+  const i = steps.findIndex((s) => s.name === start)
+  return i === -1 ? [] : steps.slice(i)
+}
+
+// Where the timer is now: moves past every step whose time has run out (several
+// at once if the phone was locked), then reports the time left in the current
+// step, or null for a step that counts up. Times are milliseconds.
+export function advanceTimer(steps: RoutineStep[], index: number, stepStartedAt: number, now: number) {
+  let i = index
+  let startedAt = stepStartedAt
+  while (i < steps.length - 1) {
+    const minutes = steps[i].minutes
+    if (minutes === null) break
+    const endsAt = startedAt + minutes * 60_000
+    if (now < endsAt) break
+    startedAt = endsAt
+    i++
+  }
+  const minutes = steps[i].minutes
+  const elapsedMs = now - startedAt
+  return {
+    index: i,
+    stepStartedAt: startedAt,
+    remainingMs: minutes === null ? null : Math.max(0, minutes * 60_000 - elapsedMs),
+    elapsedMs,
+  }
 }

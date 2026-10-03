@@ -21,7 +21,9 @@ import {
   moveStartPlan,
   moveTodoStartPlan,
   notStartedPlan,
+  advanceTimer,
   habitHistory,
+  routineFrom,
   interruptPlan,
   habitsForDay,
   habitSearchFrom,
@@ -172,6 +174,48 @@ test('interruptPlan with nothing on leaves everything alone, and refuses past 2a
   if (!('moves' in plan)) throw new Error(plan.error)
   assert.deepEqual(fmt(plan.moves), [])
   assert.ok('error' in interruptPlan([], at(25, 55), 0.25))
+})
+
+test('routineFrom runs from the picked step to the end', () => {
+  const shutdown = [
+    { name: 'Dishwasher', minutes: 5 },
+    { name: 'Empty sink', minutes: 5 },
+    { name: 'Wet food', minutes: 5 },
+    { name: 'Puzzles', minutes: null },
+  ]
+  const names = (start: string) => routineFrom(shutdown, start).map((s) => s.name)
+  assert.deepEqual(names('Dishwasher'), ['Dishwasher', 'Empty sink', 'Wet food', 'Puzzles'])
+  assert.deepEqual(names('Empty sink'), ['Empty sink', 'Wet food', 'Puzzles'])
+  assert.deepEqual(names('Wet food'), ['Wet food', 'Puzzles'])
+})
+
+test('advanceTimer moves to the next step when time is up, even several steps at once', () => {
+  const steps = [
+    { name: 'Empty sink', minutes: 5 },
+    { name: 'Wet food', minutes: 5 },
+    { name: 'Puzzles', minutes: null },
+  ]
+  const t0 = 1_000_000
+  const min = 60_000
+  // 3 minutes in: still on Empty sink, 2 minutes left
+  assert.deepEqual(advanceTimer(steps, 0, t0, t0 + 3 * min), { index: 0, stepStartedAt: t0, remainingMs: 2 * min, elapsedMs: 3 * min })
+  // 6 minutes in: Wet food, started at 5, 4 minutes left
+  assert.deepEqual(advanceTimer(steps, 0, t0, t0 + 6 * min), { index: 1, stepStartedAt: t0 + 5 * min, remainingMs: 4 * min, elapsedMs: min })
+  // 13 minutes in (phone was locked): through Wet food into Puzzles, which counts up
+  assert.deepEqual(advanceTimer(steps, 0, t0, t0 + 13 * min), { index: 2, stepStartedAt: t0 + 10 * min, remainingMs: null, elapsedMs: 3 * min })
+})
+
+test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {
+  const habits = [
+    { id: 'skool', title: 'Skool replies', minutes: 15 },
+    { id: 'shutdown', title: 'Shut down', minutes: 15, start: 23 },
+  ]
+  // From 10:50pm only 10 minutes are free before Shut down at 11, so Skool goes after it
+  const placed = placeHabits([block('a', 21, at(22, 50))], habits, at(22, 50))
+  assert.deepEqual(fmt(placed.map((p) => ({ ...p, id: p.habitId }))), ['shutdown@23:00-23:15', 'skool@23:15-23:30'])
+  // Placed at 11pm even when it's already later than that
+  const late = placeHabits([], [habits[1]], at(23, 30))
+  assert.deepEqual(fmt(late.map((p) => ({ ...p, id: p.habitId }))), ['shutdown@23:00-23:15'])
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

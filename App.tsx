@@ -51,6 +51,7 @@ import {
   DAY_END,
   DAY_START,
   fromStored,
+  hoursOf,
   logicalNow,
   toStored,
   isDoneEarly,
@@ -58,7 +59,10 @@ import {
   moveStartPlan,
   moveTodoStartPlan,
   notStartedPlan,
+  advanceTimer,
   habitHistory,
+  routineFrom,
+  type RoutineStep,
   interruptPlan,
   habitsForDay,
   habitSearchFrom,
@@ -207,6 +211,8 @@ function DayPage() {
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
+  // The routine timer that's running, if any (full page)
+  const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   // Where the settings icon was tapped, so its menu opens beside it
   const [settingsMenu, setSettingsMenu] = useState<{ x: number; y: number } | null>(null)
@@ -251,12 +257,13 @@ function DayPage() {
     async (current: CalItem[]) => {
       const { data: habits, error } = await supabase
         .from('cass_habits')
-        .select('id,title,minutes,frequency,weekday')
+        .select('id,title,minutes,frequency,weekday,start_time')
         .order('sort_order')
       if (error) return setError(error.message), false
       const from = habitSearchFrom(day, today, nowHours())
       if (from === null) return false
-      const placements = placeHabits(current, habitsForDay(habits ?? [], day), from)
+      const forDay = habitsForDay(habits ?? [], day).map((h) => ({ ...h, start: h.start_time ? hoursOf(h.start_time) : null }))
+      const placements = placeHabits(current, forDay, from)
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
           {
@@ -445,6 +452,14 @@ function DayPage() {
     load()
   }
 
+  // Starts a habit's routine timer from the picked step
+  const startRoutine = (d: Detail, stepName: string) => {
+    const steps = routineFrom(ROUTINES[d.title] ?? [], stepName)
+    if (!steps.length) return
+    setDetail(null)
+    setRoutine({ detail: d, steps, index: 0, stepStartedAt: Date.now() })
+  }
+
   // A Help option tracks on today's agenda: a block starting now, with the todos
   // and habits not finished pushed after it (interruptPlan). Then show it.
   const trackHelp = async (name: string, option: string) => {
@@ -589,9 +604,21 @@ function DayPage() {
               onMove={moveDetail}
               onDoneNow={doneNow}
               onDoneAtEnd={doneAtScheduledEnd}
+              onStartRoutine={startRoutine}
             />
           ) : null}
         </Pressable>
+      </Modal>
+
+      <Modal visible={routine !== null} animationType="slide" onRequestClose={() => setRoutine(null)}>
+        {routine ? (
+          <RoutineTimer
+            run={routine}
+            onChange={(index, stepStartedAt) => setRoutine((r) => (r ? { ...r, index, stepStartedAt } : r))}
+            onChoresDone={() => doneNow(routine.detail)}
+            onClose={() => setRoutine(null)}
+          />
+        ) : null}
       </Modal>
 
       <Modal visible={settingsMenu !== null} transparent animationType="none" onRequestClose={() => setSettingsMenu(null)}>
@@ -638,6 +665,18 @@ const HELP = [
 ]
 // How long a Help block starts out; Done now ends it at the real time
 const HELP_MINUTES = 15
+
+// Habits with a routine: their card shows a small card per timed step, and
+// tapping one starts the full-page timer from that step. Set here in code.
+const ROUTINES: Record<string, RoutineStep[]> = {
+  'Shut down': [
+    { name: 'Dishwasher', minutes: 5 },
+    { name: 'Empty sink', minutes: 5 },
+    { name: 'Wet food', minutes: 5 },
+    // Counts up until it's ended
+    { name: 'Puzzles', minutes: null },
+  ],
+}
 
 // Opens the settings menu (just Sign out) beside where it was tapped
 function SettingsButton({ onOpen }: { onOpen: (at: { x: number; y: number }) => void }) {
@@ -1066,6 +1105,7 @@ function DetailCard({
   onMove,
   onDoneNow,
   onDoneAtEnd,
+  onStartRoutine,
 }: {
   detail: Detail
   today: string
@@ -1073,7 +1113,9 @@ function DetailCard({
   onMove: (detail: Detail, start: number) => void
   onDoneNow: (detail: Detail) => void
   onDoneAtEnd: (detail: Detail) => void
+  onStartRoutine: (detail: Detail, step: string) => void
 }) {
+  const routineSteps = (ROUTINES[detail.title] ?? []).filter((step) => step.minutes !== null)
   const saved = Math.round((detail.end - detail.start) * 60)
   const savedStart = Math.round(detail.start * 60)
   const [minutes, setMinutes] = useState(saved)
@@ -1134,6 +1176,21 @@ function DetailCard({
         />
       </View>
 
+      {routineSteps.length ? (
+        <View style={styles.stepCards}>
+          {routineSteps.map((step) => (
+            <Pressable
+              key={step.name}
+              style={styles.stepCard}
+              onPress={() => onStartRoutine(detail, step.name)}
+              accessibilityLabel={`Start the timer from ${step.name}`}
+            >
+              <Text style={styles.stepCardText}>{step.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       {detail.done ? null : (
         <View style={styles.doneRow}>
           <Pressable style={styles.doneButton} onPress={() => onDoneNow(detail)}>
@@ -1145,6 +1202,67 @@ function DetailCard({
         </View>
       )}
     </View>
+  )
+}
+
+// "4:05" from milliseconds
+function mmss(ms: number) {
+  const total = Math.max(0, Math.round(ms / 1000))
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+// The full-page routine timer. Each step counts down and moves on by itself; a
+// step with no minutes (Puzzles) counts up. Reaching the first such step means
+// the chores are finished, which marks the habit done once.
+function RoutineTimer({
+  run,
+  onChange,
+  onChoresDone,
+  onClose,
+}: {
+  run: { steps: RoutineStep[]; index: number; stepStartedAt: number }
+  onChange: (index: number, stepStartedAt: number) => void
+  onChoresDone: () => void
+  onClose: () => void
+}) {
+  const [now, setNow] = useState(Date.now())
+  const markedDone = useRef(false)
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(id)
+  }, [])
+
+  const state = advanceTimer(run.steps, run.index, run.stepStartedAt, now)
+  const step = run.steps[state.index]
+  const next = run.steps[state.index + 1]
+
+  useEffect(() => {
+    if (state.index !== run.index) onChange(state.index, state.stepStartedAt)
+    if (!markedDone.current && step.minutes === null) {
+      markedDone.current = true
+      onChoresDone()
+    }
+  }, [state.index, state.stepStartedAt, run.index, step.minutes, onChange, onChoresDone])
+
+  const goNext = () => {
+    if (next) onChange(state.index + 1, Date.now())
+    else onClose()
+  }
+
+  return (
+    <SafeAreaView style={styles.timerScreen}>
+      <Text style={styles.timerStep}>{step.name}</Text>
+      <Text style={styles.timerClock}>{state.remainingMs === null ? mmss(state.elapsedMs) : mmss(state.remainingMs)}</Text>
+      <Text style={styles.timerNext}>{next ? `Next: ${next.name}` : 'Last one'}</Text>
+      <View style={styles.timerButtons}>
+        <Pressable style={[styles.submitButton, styles.timerButton]} onPress={goNext}>
+          <Text style={styles.doneButtonText}>{next ? 'Next' : 'Done'}</Text>
+        </Pressable>
+        <Pressable style={[styles.timerButton, styles.timerStop]} onPress={onClose}>
+          <Text style={styles.timerStopText}>Stop</Text>
+        </Pressable>
+      </View>
+    </SafeAreaView>
   )
 }
 
@@ -1521,6 +1639,25 @@ const styles = StyleSheet.create({
     backgroundColor: c.card,
   },
   helpCardText: { fontSize: 16, fontWeight: '600', color: c.ink },
+  stepCards: { flexDirection: 'row', gap: 6 },
+  stepCard: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: c.line,
+    backgroundColor: c.bg,
+  },
+  stepCardText: { fontSize: 13, fontWeight: '600', color: c.ink },
+  timerScreen: { flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center', padding: 16, gap: 12 },
+  timerStep: { fontSize: 28, fontWeight: '600', color: c.ink },
+  timerClock: { fontSize: 72, fontWeight: '300', color: c.ink, fontVariant: ['tabular-nums'] },
+  timerNext: { fontSize: 16, color: c.muted },
+  timerButtons: { alignSelf: 'stretch', gap: 8, marginTop: 16 },
+  timerButton: { alignSelf: 'stretch' },
+  timerStop: { alignItems: 'center', paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: c.line },
+  timerStopText: { fontSize: 16, fontWeight: '600', color: c.ink },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },
