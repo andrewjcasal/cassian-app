@@ -752,7 +752,7 @@ function DayPage() {
         <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable style={styles.detailBackdrop} onPress={() => setAddAt(null)}>
             {addAt !== null ? (
-              <AddTodoCard at={addAt} onSave={(title, minutes, done) => addTodoAt(title, addAt, minutes, done)} />
+              <AddTodoCard at={addAt} onSave={addTodoAt} />
             ) : null}
           </Pressable>
         </KeyboardAvoidingView>
@@ -1042,22 +1042,27 @@ function HabitsScreen({
   )
 }
 
-// A todo added at a tapped time on the agenda: name and length
+// A todo added at a tapped time on the agenda: a name, then the same Start
+// (centered on the tapped time) and Duration sliders as the todo card
 function AddTodoCard({
   at,
   onSave,
 }: {
   at: number
-  onSave: (title: string, minutes: number, done: boolean) => void
+  onSave: (title: string, start: number, minutes: number, done: boolean) => void
 }) {
   const [title, setTitle] = useState('')
+  const [offset, setOffset] = useState(0)
   const [minutes, setMinutes] = useState(60)
   const ready = title.trim().length > 0
+  const startMin = Math.min(Math.max(Math.round(at * 60) + offset, 0), DAY_END * 60 - minutes)
+  const start = startMin / 60
+  const save = (done: boolean) => ready && onSave(title.trim(), start, minutes, done)
 
   return (
     // Claims taps on the card so only the backdrop closes it
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
-      <Text style={styles.detailTitle}>New todo at {clock(at)}</Text>
+      <Text style={styles.detailTitle}>New todo</Text>
       <TextInput
         style={styles.input}
         value={title}
@@ -1066,40 +1071,46 @@ function AddTodoCard({
         placeholderTextColor={c.muted}
         autoFocus
         returnKeyType="done"
-        onSubmitEditing={() => ready && onSave(title.trim(), minutes, false)}
+        onSubmitEditing={() => save(false)}
       />
+      <Text style={styles.detailTimes}>
+        {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
+      </Text>
       <View style={styles.sliderRow}>
-        <Text style={styles.sliderLabel}>Length</Text>
-        <View style={styles.durations}>
-          {durationOptions(minutes).map((m) => {
-            const active = m === minutes
-            return (
-              <Pressable
-                key={m}
-                style={[styles.duration, active && styles.durationSelected]}
-                onPress={() => setMinutes(m)}
-                accessibilityLabel={`${m} minutes`}
-                accessibilityState={{ selected: active }}
-              >
-                <Text style={[styles.durationText, active && styles.durationTextSelected]}>{m}</Text>
-              </Pressable>
-            )
-          })}
-        </View>
+        <Text style={styles.sliderLabel}>Start</Text>
+        <Slider
+          style={styles.slider}
+          value={offset}
+          minimumValue={-START_SLIDER_RANGE}
+          maximumValue={START_SLIDER_RANGE}
+          step={SLIDER_STEP}
+          minimumTrackTintColor={c.line}
+          maximumTrackTintColor={c.line}
+          thumbTintColor={c.accent}
+          onValueChange={(v) => setOffset(Math.round(v))}
+          accessibilityLabel="Move the start time earlier or later"
+        />
+      </View>
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Duration</Text>
+        <Slider
+          style={styles.slider}
+          value={minutes}
+          minimumValue={SLIDER_STEP}
+          maximumValue={SLIDER_MAX}
+          step={SLIDER_STEP}
+          minimumTrackTintColor={c.accent}
+          maximumTrackTintColor={c.line}
+          thumbTintColor={c.accent}
+          onValueChange={(v) => setMinutes(Math.round(v))}
+          accessibilityLabel="Duration in minutes"
+        />
       </View>
       <View style={styles.doneRow}>
-        <Pressable
-          style={[styles.doneButton, !ready && styles.buttonDisabled]}
-          disabled={!ready}
-          onPress={() => onSave(title.trim(), minutes, false)}
-        >
+        <Pressable style={[styles.doneButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save(false)}>
           <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add</Text>
         </Pressable>
-        <Pressable
-          style={[styles.doneButton, !ready && styles.buttonDisabled]}
-          disabled={!ready}
-          onPress={() => onSave(title.trim(), minutes, true)}
-        >
+        <Pressable style={[styles.doneButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save(true)}>
           <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Mark as Done</Text>
         </Pressable>
       </View>
