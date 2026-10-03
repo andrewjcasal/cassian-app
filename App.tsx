@@ -31,6 +31,8 @@ import {
   LogOut,
   MoreHorizontal,
   NotebookPen,
+  Pause,
+  Play,
   Plus,
   Settings,
   X,
@@ -61,6 +63,7 @@ import {
   notStartedPlan,
   advanceTimer,
   habitHistory,
+  resumeTimer,
   routineFrom,
   type RoutineStep,
   interruptPlan,
@@ -1248,13 +1251,15 @@ function RoutineTimer({
   onClose: () => void
 }) {
   const [now, setNow] = useState(Date.now())
+  // When the current step was paused; while set, the clock holds at that moment
+  const [pausedAt, setPausedAt] = useState<number | null>(null)
   const markedDone = useRef(false)
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 500)
     return () => clearInterval(id)
   }, [])
 
-  const state = advanceTimer(run.steps, run.index, run.stepStartedAt, now)
+  const state = advanceTimer(run.steps, run.index, run.stepStartedAt, pausedAt ?? now)
   const step = run.steps[state.index]
   const next = run.steps[state.index + 1]
 
@@ -1267,16 +1272,27 @@ function RoutineTimer({
   }, [state.index, state.stepStartedAt, run.index, step.minutes, onChange, onChoresDone])
 
   const goNext = () => {
+    setPausedAt(null)
     if (next) onChange(state.index + 1, Date.now())
     else onClose()
+  }
+
+  const togglePause = () => {
+    if (pausedAt === null) return setPausedAt(Date.now())
+    onChange(state.index, resumeTimer(state.stepStartedAt, pausedAt, Date.now()))
+    setPausedAt(null)
   }
 
   return (
     <SafeAreaView style={styles.timerScreen}>
       <Text style={styles.timerStep}>{step.name}</Text>
       <Text style={styles.timerClock}>{state.remainingMs === null ? mmss(state.elapsedMs) : mmss(state.remainingMs)}</Text>
-      <Text style={styles.timerNext}>{next ? `Next: ${next.name}` : 'Last one'}</Text>
+      <Text style={styles.timerNext}>{pausedAt !== null ? 'Paused' : next ? `Next: ${next.name}` : 'Last one'}</Text>
       <View style={styles.timerButtons}>
+        <Pressable style={[styles.timerStop, styles.timerPause]} onPress={togglePause}>
+          {pausedAt === null ? <Pause size={18} color={c.ink} /> : <Play size={18} color={c.ink} />}
+          <Text style={styles.timerStopText}>{pausedAt === null ? 'Pause' : 'Resume'}</Text>
+        </Pressable>
         <Pressable style={[styles.submitButton, styles.timerButton]} onPress={goNext}>
           <Text style={styles.doneButtonText}>{next ? 'Next' : 'Done'}</Text>
         </Pressable>
@@ -1694,6 +1710,7 @@ const styles = StyleSheet.create({
   timerButton: { alignSelf: 'stretch' },
   timerStop: { alignItems: 'center', paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: c.line },
   timerStopText: { fontSize: 16, fontWeight: '600', color: c.ink },
+  timerPause: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },

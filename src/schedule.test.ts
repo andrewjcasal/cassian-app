@@ -22,6 +22,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   advanceTimer,
+  resumeTimer,
   habitHistory,
   routineFrom,
   interruptPlan,
@@ -251,6 +252,22 @@ test('Fixed todos stay put on the Todos tab: resize and reorder leave them alone
   assert.deepEqual(resized.moves.map((m) => m.id), ['a'])
   const b = todo('b', at(23, 15), at(23, 45))
   assert.deepEqual(relayout([a, shutdown, b], [b, shutdown, a]).map((u) => u.id).sort(), ['a', 'b'])
+})
+
+test('resumeTimer shifts the step start by the paused stretch, so the time left is unchanged', () => {
+  const steps = [
+    { name: 'Dishwasher', minutes: 5 },
+    { name: 'Empty sink', minutes: 5 },
+  ]
+  const t0 = 1_000_000
+  const min = 60_000
+  // Paused 2 minutes in, for 10 minutes
+  const pausedAt = t0 + 2 * min
+  const resumedAt = pausedAt + 10 * min
+  const start = resumeTimer(t0, pausedAt, resumedAt)
+  assert.equal(start, t0 + 10 * min)
+  const after = advanceTimer(steps, 0, start, resumedAt)
+  assert.deepEqual([after.index, after.remainingMs], [0, 3 * min])
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

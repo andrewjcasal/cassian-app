@@ -526,3 +526,9 @@ export function advanceTimer(steps: RoutineStep[], index: number, stepStartedAt:
     elapsedMs,
   }
 }
+
+// Resuming a paused timer: the step's start moves later by however long it was
+// paused, so the paused stretch doesn't count against the step
+export function resumeTimer(stepStartedAt: number, pausedAt: number, now: number) {
+  return stepStartedAt + (now - pausedAt)
+}
