@@ -24,6 +24,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  LifeBuoy,
   Clock,
   GripVertical,
   ListTodo,
@@ -31,7 +32,6 @@ import {
   MoreHorizontal,
   NotebookPen,
   Plus,
-  Repeat,
   Settings,
   X,
 } from 'lucide-react-native'
@@ -59,6 +59,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   habitHistory,
+  interruptPlan,
   habitsForDay,
   habitSearchFrom,
   placeHabits,
@@ -174,7 +175,7 @@ function SignIn() {
   )
 }
 
-type Tab = 'todos' | 'agenda' | 'habits' | 'planning'
+type Tab = 'todos' | 'agenda' | 'planning' | 'help'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
 type Menu = { item: CalItem; x: number; y: number }
 // What the tap-to-open card shows. It keeps only the id, and a new length is
@@ -213,8 +214,9 @@ function DayPage() {
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
 
-  const fetchItems = useCallback(async () => {
-    // The day runs 6am to 6am: this date from 6am on, plus the next date before 6am
+  // A day's blocks and timed tasks. The day runs 6am to 6am: that date from 6am
+  // on, plus the next date before 6am.
+  const fetchDayItems = useCallback(async (day: string) => {
     const next = shiftDay(day, 1)
     const morning = timeOf(DAY_START)
     const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at'
@@ -237,7 +239,9 @@ function DayPage() {
       return { id: t.id, title: t.title, start, end, kind: 'task', done: t.done }
     })
     return [...blocks, ...tasks].sort((a, b) => a.start - b.start)
-  }, [day])
+  }, [])
+
+  const fetchItems = useCallback(() => fetchDayItems(day), [day, fetchDayItems])
 
   // Today, every habit without a block yet goes into the first gap that fits it.
   // The (habit_id, logical_day) unique index keeps a racing load from placing one
@@ -441,6 +445,24 @@ function DayPage() {
     load()
   }
 
+  // A Help option tracks on today's agenda: a block starting now, with the todos
+  // and habits not finished pushed after it (interruptPlan). Then show it.
+  const trackHelp = async (name: string, option: string) => {
+    const todayItems = await fetchDayItems(today)
+    const plan = interruptPlan(todayItems, nowHours(), HELP_MINUTES / 60)
+    if ('error' in plan) return setError(plan.error)
+    const { error } = await supabase.from('cass_time_blocks').insert({
+      ...toStored(today, plan.start, plan.end),
+      title: `${name}: ${option}`,
+      kind: 'personal',
+      source: 'help',
+    })
+    if (error) return setError(error.message)
+    setTab('agenda')
+    setDay(today)
+    await saveMoves(plan.moves, () => today)
+  }
+
   // Dragging a todo to a new spot re-packs the swapped range back to back from
   // where its first todo started, each keeping its own length.
   const reorder = async (next: Todo[]) => {
@@ -457,12 +479,12 @@ function DayPage() {
 
   return (
     <View style={styles.screen}>
-      {/* Habits stays mounted (hidden on other tabs) so it's loaded before you open it */}
-      <View style={tab === 'habits' ? styles.screenFill : styles.hidden}>
-        <HabitsScreen active={tab === 'habits'} today={today} onSettings={setSettingsMenu} />
+      {/* Planning (habits) stays mounted, hidden on other tabs, so it's loaded before you open it */}
+      <View style={tab === 'planning' ? styles.screenFill : styles.hidden}>
+        <HabitsScreen active={tab === 'planning'} today={today} onSettings={setSettingsMenu} />
       </View>
-      {tab === 'habits' ? null : tab === 'planning' ? (
-        <PlanningScreen onSettings={setSettingsMenu} />
+      {tab === 'planning' ? null : tab === 'help' ? (
+        <HelpScreen onSettings={setSettingsMenu} onTrack={trackHelp} />
       ) : (
       <ScrollView
         scrollEnabled={!dragging}
@@ -605,9 +627,17 @@ const WEEKDAY_NAMES = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursday
 const TABS = [
   { key: 'todos', label: 'Todos', Icon: ListTodo },
   { key: 'agenda', label: 'Agenda', Icon: CalendarDays },
-  { key: 'habits', label: 'Habits', Icon: Repeat },
   { key: 'planning', label: 'Planning', Icon: NotebookPen },
+  { key: 'help', label: 'Help', Icon: LifeBuoy },
 ] as const
+
+// The Help tab's cards and what each one can do. Set here in code for now.
+const HELP = [
+  { name: 'Theo', options: ['Open window', 'Puzzles'] },
+  { name: 'Cat Fight', options: ['Play'] },
+]
+// How long a Help block starts out; Done now ends it at the real time
+const HELP_MINUTES = 15
 
 // Opens the settings menu (just Sign out) beside where it was tapped
 function SettingsButton({ onOpen }: { onOpen: (at: { x: number; y: number }) => void }) {
@@ -649,12 +679,53 @@ function ScreenHeader({
   )
 }
 
-// Planning is a blank screen for now
-function PlanningScreen({ onSettings }: { onSettings: (at: { x: number; y: number }) => void }) {
+// Help: a small card per person or pet; tapping one lists what you can do, and
+// picking one tracks it on today's agenda starting now
+function HelpScreen({
+  onSettings,
+  onTrack,
+}: {
+  onSettings: (at: { x: number; y: number }) => void
+  onTrack: (name: string, option: string) => void
+}) {
+  const [open, setOpen] = useState<(typeof HELP)[number] | null>(null)
+
   return (
-    <ScrollView contentContainerStyle={styles.page}>
-      <ScreenHeader title="Planning" onSettings={onSettings} />
-    </ScrollView>
+    <>
+      <ScrollView contentContainerStyle={styles.page}>
+        <ScreenHeader title="Help" onSettings={onSettings} />
+        <View style={styles.helpGrid}>
+          {HELP.map((h) => (
+            <Pressable key={h.name} style={styles.helpCard} onPress={() => setOpen(h)}>
+              <Text style={styles.helpCardText}>{h.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </ScrollView>
+
+      <Modal visible={open !== null} transparent animationType="none" onRequestClose={() => setOpen(null)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setOpen(null)}>
+          {open ? (
+            // Claims taps on the card so only the backdrop closes it
+            <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+              <Text style={styles.detailTitle}>{open.name}</Text>
+              {open.options.map((option) => (
+                <Pressable
+                  key={option}
+                  style={styles.submitButton}
+                  onPress={() => {
+                    setOpen(null)
+                    onTrack(open.name, option)
+                  }}
+                >
+                  <Text style={styles.doneButtonText}>{option}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </Pressable>
+      </Modal>
+    </>
   )
 }
 
@@ -736,14 +807,14 @@ function HabitsScreen({
   }
 
   const sections = [
-    { title: 'DAILY', list: habits.filter((h) => h.frequency === 'daily') },
-    { title: 'WEEKLY', list: habits.filter((h) => h.frequency === 'weekly') },
+    { title: 'DAILY HABITS', list: habits.filter((h) => h.frequency === 'daily') },
+    { title: 'WEEKLY HABITS', list: habits.filter((h) => h.frequency === 'weekly') },
   ]
 
   return (
     <>
       <ScrollView contentContainerStyle={styles.page}>
-        <ScreenHeader title="Habits" onSettings={onSettings} onAdd={() => setAdding(true)} />
+        <ScreenHeader title="Planning" onSettings={onSettings} onAdd={() => setAdding(true)} />
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {sections.map(({ title, list }) => (
           <View key={title}>
@@ -1439,6 +1510,17 @@ const styles = StyleSheet.create({
   buttonDisabledText: { color: c.muted },
   addButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   addButtonText: { fontSize: 16, fontWeight: '600', color: c.accent },
+  helpGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  helpCard: {
+    width: '48%',
+    paddingVertical: 18,
+    alignItems: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: c.line,
+    backgroundColor: c.card,
+  },
+  helpCardText: { fontSize: 16, fontWeight: '600', color: c.ink },
   menuText: { fontSize: 16, color: c.ink },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },

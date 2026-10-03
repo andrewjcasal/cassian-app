@@ -350,6 +350,24 @@ function pushFrom(later: Move[], end: number): Move[] {
   return moves
 }
 
+// Something that interrupts the day (a Help option): it starts this minute, and
+// the todos and habits not finished yet, including one under way, are pushed to
+// follow it as far as they overlap. Older calendar blocks stay put.
+export function interruptPlan(
+  items: CalItem[],
+  now: number,
+  length: number,
+): { start: number; end: number; moves: Move[] } | { error: string } {
+  const start = minuteOf(now)
+  const end = start + length
+  const rest = items
+    .filter((it) => it.kind === 'block' && !it.done && (it.source === 'app' || it.source === 'habit') && it.end > start + EPS)
+    .map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
+  const moves = pushFrom(rest, end)
+  if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
+  return { start, end, moves }
+}
+
 // A block moved to start at `newStart`, same length. Blocks it now overlaps from
 // there on are pushed along after it; blocks before it, and blocks after a gap,
 // stay put.

@@ -22,6 +22,7 @@ import {
   moveTodoStartPlan,
   notStartedPlan,
   habitHistory,
+  interruptPlan,
   habitsForDay,
   habitSearchFrom,
   placeHabits,
@@ -151,6 +152,26 @@ test('habitHistory for a weekly habit counts only its weekday', () => {
     habitHistory(rows, '2026-10-03', 6).map((r) => `${r.day} ${r.status}`),
     ['2026-10-03 pending', '2026-09-26 missed', '2026-09-19 done'],
   )
+})
+
+test('interruptPlan starts the block now and pushes the todos and habits not finished after it', () => {
+  const items = [
+    block('done', 15, 16, { done: true }),
+    block('washer', 18, 19), // under way at 6:12
+    block('skool', 19, at(19, 15), { source: 'habit', habitId: 'h1' }),
+    block('old', 20, 21, { source: 'manual' }), // not carried
+  ]
+  const plan = interruptPlan(items, at(18, 12), 0.25)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual([plan.start, plan.end], [at(18, 12), at(18, 27)])
+  assert.deepEqual(fmt(plan.moves), ['washer@18:27-19:27', 'skool@19:27-19:42'])
+})
+
+test('interruptPlan with nothing on leaves everything alone, and refuses past 2am', () => {
+  const plan = interruptPlan([block('later', 21, 22)], at(18, 12), 0.25)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), [])
+  assert.ok('error' in interruptPlan([], at(25, 55), 0.25))
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
