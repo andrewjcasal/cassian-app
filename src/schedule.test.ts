@@ -359,6 +359,20 @@ test('swipeDays: a clearly sideways swipe moves a day, anything else does nothin
   assert.equal(swipeDays(-90, 70), 0) // too diagonal, probably a scroll
 })
 
+test('An event is never moved: rules only carry todos and habits', () => {
+  const washer = block('washer', 16, 17)
+  const event = block('dentist', 17, 18, { source: 'event', fixed: true })
+  const items = [washer, event, block('skool', 18, at(18, 15), { source: 'habit' })]
+  const ids = (plan: { moves: { id: string }[] } | { error: string }) => {
+    if (!('moves' in plan)) throw new Error(plan.error)
+    return plan.moves.map((m) => m.id)
+  }
+  assert.ok(!ids(startNowPlan(items, washer, at(16, 30))).includes('dentist'))
+  assert.ok(!ids(resizeItemPlan(items, washer, 120)).includes('dentist'))
+  assert.ok(!ids(insertAtPlan(items, 16, 1)).includes('dentist'))
+  assert.deepEqual(menuOptions(event, DAY, DAY, at(17, 30)).map(([k]) => k), ['done'])
+})
+
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
   const carve = block('carve', 18, 19)
   const items = [

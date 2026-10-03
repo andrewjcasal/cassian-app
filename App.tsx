@@ -293,7 +293,8 @@ function DayPage() {
     const blocks: CalItem[] = [...(blockRes.data ?? []), ...(lateBlockRes.data ?? [])].map((b) => {
       const { start, end } = fromStored(b.day, b.start_time, b.end_time)
       const doneEarly = isDoneEarly(b.done, b.done_at, day, start)
-      const fixed = hasSetTime(b.cass_habits)
+      // A set-time habit or an event stays where it is
+      const fixed = hasSetTime(b.cass_habits) || b.source === 'event'
       return {
         id: b.id,
         title: b.title,
@@ -585,9 +586,10 @@ function DayPage() {
       })
   }, [detail?.id])
 
-  // A todo added at a tapped time; the todos and habits from there on move along
-  // behind it (insertAtPlan). Mark as Done adds it already done, stamped at its end.
-  const addTodoAt = async (title: string, start: number, minutes: number, done: boolean) => {
+  // A todo or event added at a tapped time; the todos and habits from there on move
+  // along behind it (insertAtPlan). Mark as Done adds it already done, stamped at
+  // its end. An event is saved as source 'event', which no rule ever moves.
+  const addTodoAt = async (title: string, start: number, minutes: number, as: 'todo' | 'done' | 'event') => {
     setAddAt(null)
     const plan = insertAtPlan(items, start, minutes / 60)
     if ('error' in plan) return setError(plan.error)
@@ -595,10 +597,10 @@ function DayPage() {
       .from('cass_time_blocks')
       .insert({
         ...toStored(day, plan.start, plan.end),
-        ...(done ? doneAtEnd(day, plan.start, plan.end) : {}),
+        ...(as === 'done' ? doneAtEnd(day, plan.start, plan.end) : {}),
         title,
         kind: 'personal',
-        source: 'app',
+        source: as === 'event' ? 'event' : 'app',
       })
     if (error) return setError(error.message)
     await saveMoves(plan.moves)
@@ -1087,20 +1089,27 @@ function AddTodoCard({
   onSave,
 }: {
   at: number
-  onSave: (title: string, start: number, minutes: number, done: boolean) => void
+  onSave: (title: string, start: number, minutes: number, as: 'todo' | 'done' | 'event') => void
 }) {
+  // A todo, or an event (fixed: no rule moves it)
+  const [mode, setMode] = useState<'todo' | 'event'>('todo')
   const [title, setTitle] = useState('')
   const [offset, setOffset] = useState(0)
   const [minutes, setMinutes] = useState(60)
   const ready = title.trim().length > 0
   const startMin = Math.min(Math.max(Math.round(at * 60) + offset, 0), DAY_END * 60 - minutes)
   const start = startMin / 60
-  const save = (done: boolean) => ready && onSave(title.trim(), start, minutes, done)
+  const save = (as: 'todo' | 'done' | 'event') => ready && onSave(title.trim(), start, minutes, as)
 
   return (
     // Claims taps on the card so only the backdrop closes it
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
-      <Text style={styles.detailTitle}>New todo</Text>
+      <View style={styles.modeRow}>
+        <Text style={[styles.detailTitle, styles.modeHalf]}>{mode === 'todo' ? 'New todo' : 'New event'}</Text>
+        <Pressable style={styles.modeHalf} onPress={() => setMode(mode === 'todo' ? 'event' : 'todo')} hitSlop={8}>
+          <Text style={styles.modeSwitch}>{mode === 'todo' ? 'Event' : 'Todo'}</Text>
+        </Pressable>
+      </View>
       <TextInput
         style={styles.input}
         value={title}
@@ -1109,7 +1118,7 @@ function AddTodoCard({
         placeholderTextColor={c.muted}
         autoFocus
         returnKeyType="done"
-        onSubmitEditing={() => save(false)}
+        onSubmitEditing={() => save(mode === 'event' ? 'event' : 'todo')}
       />
       <Text style={styles.detailTimes}>
         {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
@@ -1144,14 +1153,20 @@ function AddTodoCard({
           accessibilityLabel="Duration in minutes"
         />
       </View>
-      <View style={styles.doneRow}>
-        <Pressable style={[styles.doneButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save(false)}>
-          <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add</Text>
+      {mode === 'event' ? (
+        <Pressable style={[styles.submitButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save('event')}>
+          <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Save</Text>
         </Pressable>
-        <Pressable style={[styles.doneButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save(true)}>
-          <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Mark as Done</Text>
-        </Pressable>
-      </View>
+      ) : (
+        <View style={styles.doneRow}>
+          <Pressable style={[styles.doneButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save('todo')}>
+            <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add</Text>
+          </Pressable>
+          <Pressable style={[styles.doneButton, !ready && styles.buttonDisabled]} disabled={!ready} onPress={() => save('done')}>
+            <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Mark as Done</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   )
 }
@@ -2107,6 +2122,9 @@ const styles = StyleSheet.create({
   timerRow: { flexDirection: 'row', gap: 8 },
   timerHalf: { flex: 1 },
   oneOffRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  modeRow: { flexDirection: 'row', alignItems: 'baseline' },
+  modeHalf: { flex: 1 },
+  modeSwitch: { fontSize: 16, fontWeight: '600', color: c.muted },
   oneOffInput: { flex: 1 },
   oneOffStart: { marginTop: 0, paddingHorizontal: 16 },
   parts: { marginTop: 4 },
