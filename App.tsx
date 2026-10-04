@@ -994,8 +994,11 @@ function HabitsScreen({
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Habit | null>(null)
   const [adding, setAdding] = useState(false)
-  // A Help card's list of sub-events
-  const [helpOpen, setHelpOpen] = useState<(typeof HELP)[number] | null>(null)
+  // Which Help events are expanded, and the sub-event whose card is open
+  const [helpExpanded, setHelpExpanded] = useState<Set<string>>(new Set())
+  const [subEvent, setSubEvent] = useState<{ name: string; option: string } | null>(null)
+  // Every tracked Help event, by its title ("Theo: Open window"), loaded with the list
+  const [helpHistory, setHelpHistory] = useState<Map<string, { day: string; start: number; end: number }[]>>(new Map())
   // Every habit's blocks, loaded with the list so a habit's history is ready the
   // moment its card opens
   const [blocksByHabit, setBlocksByHabit] = useState<Map<string, HabitBlock[]>>(new Map())
@@ -1007,8 +1010,20 @@ function HabitsScreen({
     Promise.all([
       supabase.from('cass_habits').select('id,title,minutes,frequency,weekday,start_time').order('sort_order'),
       supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done').not('habit_id', 'is', null),
-    ]).then(([habitRes, blockRes]) => {
-      const err = habitRes.error ?? blockRes.error
+      supabase
+        .from('cass_time_blocks')
+        .select('title,day,start_time,end_time')
+        .eq('source', 'event')
+        .in('title', HELP.flatMap((h) => h.options.map((o) => `${h.name}: ${o}`))),
+    ]).then(([habitRes, blockRes, helpRes]) => {
+      const err = habitRes.error ?? blockRes.error ?? helpRes.error
+      const byTitle = new Map<string, { day: string; start: number; end: number }[]>()
+      for (const b of helpRes.data ?? []) {
+        const row = fromStored(b.day, b.start_time, b.end_time)
+        byTitle.set(b.title, [...(byTitle.get(b.title) ?? []), row])
+      }
+      for (const list of byTitle.values()) list.sort((x, y) => (x.day === y.day ? y.start - x.start : x.day < y.day ? 1 : -1))
+      setHelpHistory(byTitle)
       if (err) setError(err.message)
       setHabits(habitRes.data ?? [])
       const byHabit = new Map<string, HabitBlock[]>()
@@ -1098,33 +1113,74 @@ function HabitsScreen({
 
         <Text style={styles.sectionLabel}>HELP EVENTS</Text>
         <View style={styles.card}>
-          {HELP.map((h) => (
-            <Pressable key={h.name} style={styles.todoRow} onPress={() => setHelpOpen(h)}>
-              <Text style={[styles.todoText, { flex: 1 }]}>{h.name}</Text>
-              <Text style={styles.minutesLabel}>
-                {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
-              </Text>
-              <ChevronRight size={18} color={c.muted} />
-            </Pressable>
-          ))}
+          {HELP.map((h) => {
+            const open = helpExpanded.has(h.name)
+            return (
+              <View key={h.name}>
+                <Pressable
+                  style={styles.todoRow}
+                  onPress={() =>
+                    setHelpExpanded((set) => {
+                      const next = new Set(set)
+                      if (open) next.delete(h.name)
+                      else next.add(h.name)
+                      return next
+                    })
+                  }
+                  accessibilityState={{ expanded: open }}
+                >
+                  <Text style={[styles.todoText, { flex: 1 }]}>{h.name}</Text>
+                  <Text style={styles.minutesLabel}>
+                    {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
+                  </Text>
+                  {open ? <ChevronDown size={18} color={c.muted} /> : <ChevronRight size={18} color={c.muted} />}
+                </Pressable>
+                {open
+                  ? h.options.map((option) => (
+                      <Pressable
+                        key={option}
+                        style={[styles.todoRow, styles.subRow]}
+                        onPress={() => setSubEvent({ name: h.name, option })}
+                      >
+                        <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
+                        <Text style={styles.minutesLabel}>{HELP_MINUTES} min</Text>
+                      </Pressable>
+                    ))
+                  : null}
+              </View>
+            )
+          })}
         </View>
 
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
-      <Modal visible={helpOpen !== null} transparent animationType="none" onRequestClose={() => setHelpOpen(null)}>
-        <Pressable style={styles.detailBackdrop} onPress={() => setHelpOpen(null)}>
-          {helpOpen ? (
+      <Modal visible={subEvent !== null} transparent animationType="none" onRequestClose={() => setSubEvent(null)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setSubEvent(null)}>
+          {subEvent ? (
             // Claims taps on the card so only the backdrop closes it
-            <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
-              <Text style={styles.detailTitle}>{helpOpen.name}</Text>
-              <Text style={styles.sectionLabel}>EVENTS</Text>
-              {helpOpen.options.map((option) => (
-                <View key={option} style={styles.partRow}>
-                  <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
-                  <Text style={styles.minutesLabel}>{HELP_MINUTES} min</Text>
-                </View>
-              ))}
+            <View style={[styles.detailCard, styles.historyCard]} onStartShouldSetResponder={() => true}>
+              <Text style={styles.detailTitle}>{subEvent.option}</Text>
+              <Text style={styles.detailDay}>
+                {subEvent.name} · {HELP_MINUTES} min to start
+              </Text>
+              {(() => {
+                const times = helpHistory.get(`${subEvent.name}: ${subEvent.option}`) ?? []
+                return times.length ? (
+                  <ScrollView style={styles.historyList}>
+                    {times.map((t, i) => (
+                      <View key={`${t.day}-${t.start}-${i}`} style={styles.partRow}>
+                        <Text style={[styles.todoText, { flex: 1 }]}>{t.day === today ? 'Today' : dayLabel(t.day)}</Text>
+                        <Text style={styles.minutesLabel}>
+                          {clock(t.start)} · {Math.round((t.end - t.start) * 60)} min
+                        </Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                ) : (
+                  <Text style={styles.historySummary}>Not tracked yet</Text>
+                )
+              })()}
             </View>
           ) : null}
         </Pressable>
@@ -2205,6 +2261,7 @@ const styles = StyleSheet.create({
   weekdays: { flexDirection: 'row', gap: 4 },
   weekday: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: c.line },
   historyList: { flexGrow: 0 },
+  subRow: { paddingLeft: 24 },
   dropdown: {
     flex: 1,
     flexDirection: 'row',
