@@ -1792,7 +1792,7 @@ function DetailCard({
         <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
         {detail.habitId ? (
           <Pressable onPress={() => setShowContext(!showContext)} hitSlop={8} accessibilityState={{ expanded: showContext }}>
-            <Text style={styles.modeSwitch}>Context</Text>
+            <Text style={styles.modeSwitch}>{showContext ? 'General' : 'Context'}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -1821,98 +1821,103 @@ function DetailCard({
           ) : null}
         </View>
       ) : null}
-      {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
-      <Text style={styles.detailTimes}>
-        {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
-      </Text>
+      {/* Context shows on its own; General is the rest of the card */}
+      {showContext ? null : (
+        <>
+          {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
+          <Text style={styles.detailTimes}>
+            {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
+          </Text>
 
-      {/* A set-time habit stays at its time; an event's time is yours to move */}
-      {detail.fixed && !detail.event ? (
-        <View style={styles.sliderRow}>
-          <Text style={styles.sliderLabel}>Start</Text>
-          <Text style={styles.minutesLabel}>Fixed at {clock(detail.start)}</Text>
-        </View>
-      ) : (
-        <View style={styles.sliderRow}>
-          <Text style={styles.sliderLabel}>Start</Text>
-          <Slider
-            style={styles.slider}
-            value={offset}
-            minimumValue={-START_SLIDER_RANGE}
-            maximumValue={START_SLIDER_RANGE}
-            step={SLIDER_STEP}
-            minimumTrackTintColor={c.line}
-            maximumTrackTintColor={c.line}
-            thumbTintColor={c.accent}
-            onValueChange={(v) => setOffset(Math.round(v))}
-            onSlidingComplete={() => {
-              if (startMin !== savedStart) onMove(detail, startMin / 60)
-              else setOffset(0)
-            }}
-            accessibilityLabel="Move the start time earlier or later"
-          />
-        </View>
-      )}
-
-      <View style={styles.sliderRow}>
-        <Text style={styles.sliderLabel}>Duration</Text>
-        <Slider
-          style={styles.slider}
-          value={minutes}
-          minimumValue={SLIDER_STEP}
-          maximumValue={Math.max(SLIDER_MAX, saved)}
-          step={SLIDER_STEP}
-          minimumTrackTintColor={c.accent}
-          maximumTrackTintColor={c.line}
-          thumbTintColor={c.accent}
-          onValueChange={(v) => setMinutes(Math.round(v))}
-          onSlidingComplete={(v) => {
-            const next = Math.round(v)
-            if (next !== saved) onResize(detail, next)
-          }}
-          accessibilityLabel="Duration in minutes"
-        />
-      </View>
-
-      {routineSteps.length ? (
-        <View style={styles.stepCards}>
-          {routineSteps.map((step) => (
-            <Pressable
-              key={step.name}
-              style={styles.stepCard}
-              onPress={() => onStartRoutine(detail, step.name)}
-              accessibilityLabel={`Start the timer from ${step.name}`}
-            >
-              <Text style={styles.stepCardText}>{step.name}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-
-      {detail.done || detail.event ? null : (
-        <View style={styles.doneRow}>
-          <Pressable style={styles.doneButton} onPress={() => onDoneNow(detail)}>
-            <Text style={styles.doneButtonText}>Done now</Text>
-          </Pressable>
-          <Pressable style={styles.doneButton} onPress={() => onDoneAtEnd(detail)}>
-            <Text style={styles.doneButtonText}>Done at {clock(detail.end)}</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {parts.length ? (
-        <View style={styles.parts}>
-          <Text style={styles.sectionLabel}>ACTIVITY</Text>
-          {parts.map((p) => (
-            <View key={p.id} style={styles.partRow}>
-              <Text style={[styles.todoText, { flex: 1 }]}>{p.title}</Text>
-              <Text style={styles.minutesLabel}>
-                {clock(p.start)} · {Math.round((p.end - p.start) * 60)} min
-              </Text>
+          {/* A set-time habit stays at its time; an event's time is yours to move */}
+          {detail.fixed && !detail.event ? (
+            <View style={styles.sliderRow}>
+              <Text style={styles.sliderLabel}>Start</Text>
+              <Text style={styles.minutesLabel}>Fixed at {clock(detail.start)}</Text>
             </View>
-          ))}
-        </View>
-      ) : null}
+          ) : (
+            <View style={styles.sliderRow}>
+              <Text style={styles.sliderLabel}>Start</Text>
+              <Slider
+                style={styles.slider}
+                value={offset}
+                minimumValue={-START_SLIDER_RANGE}
+                maximumValue={START_SLIDER_RANGE}
+                step={SLIDER_STEP}
+                minimumTrackTintColor={c.line}
+                maximumTrackTintColor={c.line}
+                thumbTintColor={c.accent}
+                onValueChange={(v) => setOffset(Math.round(v))}
+                onSlidingComplete={() => {
+                  if (startMin !== savedStart) onMove(detail, startMin / 60)
+                  else setOffset(0)
+                }}
+                accessibilityLabel="Move the start time earlier or later"
+              />
+            </View>
+          )}
+
+          <View style={styles.sliderRow}>
+            <Text style={styles.sliderLabel}>Duration</Text>
+            <Slider
+              style={styles.slider}
+              value={minutes}
+              minimumValue={SLIDER_STEP}
+              maximumValue={Math.max(SLIDER_MAX, saved)}
+              step={SLIDER_STEP}
+              minimumTrackTintColor={c.accent}
+              maximumTrackTintColor={c.line}
+              thumbTintColor={c.accent}
+              onValueChange={(v) => setMinutes(Math.round(v))}
+              onSlidingComplete={(v) => {
+                const next = Math.round(v)
+                if (next !== saved) onResize(detail, next)
+              }}
+              accessibilityLabel="Duration in minutes"
+            />
+          </View>
+
+          {routineSteps.length ? (
+            <View style={styles.stepCards}>
+              {routineSteps.map((step) => (
+                <Pressable
+                  key={step.name}
+                  style={styles.stepCard}
+                  onPress={() => onStartRoutine(detail, step.name)}
+                  accessibilityLabel={`Start the timer from ${step.name}`}
+                >
+                  <Text style={styles.stepCardText}>{step.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          {detail.done || detail.event ? null : (
+            <View style={styles.doneRow}>
+              <Pressable style={styles.doneButton} onPress={() => onDoneNow(detail)}>
+                <Text style={styles.doneButtonText}>Done now</Text>
+              </Pressable>
+              <Pressable style={styles.doneButton} onPress={() => onDoneAtEnd(detail)}>
+                <Text style={styles.doneButtonText}>Done at {clock(detail.end)}</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {parts.length ? (
+            <View style={styles.parts}>
+              <Text style={styles.sectionLabel}>ACTIVITY</Text>
+              {parts.map((p) => (
+                <View key={p.id} style={styles.partRow}>
+                  <Text style={[styles.todoText, { flex: 1 }]}>{p.title}</Text>
+                  <Text style={styles.minutesLabel}>
+                    {clock(p.start)} · {Math.round((p.end - p.start) * 60)} min
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </>
+      )}
     </View>
   )
 }
