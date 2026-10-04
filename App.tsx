@@ -94,9 +94,8 @@ const EVENT_LEFT = 52
 const EVENT_RIGHT = 30
 // A short block is at least this tall so its title stays readable
 const SHORT_MIN_PX = 20
-// Today's grid shows this many hours before and after now
+// Today opens scrolled to this many hours before now (the grid still runs 6am to 2am)
 const LOOKBACK_HOURS = 3
-const LOOKAHEAD_HOURS = 5
 // The agenda runs to 2am (hour 26); scheduling itself still stops at midnight
 const LAST_HOUR = 26
 
@@ -268,6 +267,10 @@ function DayPage() {
       },
     }),
   ).current
+  // Today's agenda opens scrolled to a few hours before now. Set when today's
+  // agenda comes into view, used once the scroll content has its size.
+  const agendaScroll = useRef<ScrollView>(null)
+  const scrollToNowPending = useRef(true)
   // The time tapped in the agenda's right strip, for a new todo there
   const [addAt, setAddAt] = useState<number | null>(null)
   // The routine timer that's running, if any (full page)
@@ -395,6 +398,14 @@ function DayPage() {
     await loadDay(day)
     setRefreshing(false)
   }
+
+  // Coming back to today's agenda scrolls near now again
+  useEffect(() => {
+    if (tab !== 'agenda' || day !== today) return
+    scrollToNowPending.current = true
+    const hour = Math.max(FIRST_HOUR, Math.floor(nowHours() - LOOKBACK_HOURS))
+    agendaScroll.current?.scrollTo({ y: (hour - FIRST_HOUR) * HOUR_PX, animated: false })
+  }, [tab, day, today])
 
   // Today and yesterday are fetched as soon as the app opens
   useEffect(() => {
@@ -675,6 +686,13 @@ function DayPage() {
         </View>
         <Animated.View style={[styles.screenFill, { transform: [{ translateX: tab === 'agenda' ? daySlide : 0 }] }]}>
           <ScrollView
+            ref={agendaScroll}
+            onContentSizeChange={() => {
+              if (!scrollToNowPending.current || tab !== 'agenda' || day !== today) return
+              scrollToNowPending.current = false
+              const hour = Math.max(FIRST_HOUR, Math.floor(nowHours() - LOOKBACK_HOURS))
+              agendaScroll.current?.scrollTo({ y: (hour - FIRST_HOUR) * HOUR_PX, animated: false })
+            }}
             scrollEnabled={!dragging}
             contentContainerStyle={styles.page}
             keyboardShouldPersistTaps="handled"
@@ -1968,8 +1986,9 @@ function DayGrid({
   onAddAt: (hour: number) => void
 }) {
   const nowHours = logicalNow(new Date()).hours
-  const first = showNow ? Math.max(0, Math.floor(nowHours - LOOKBACK_HOURS)) : FIRST_HOUR
-  const last = showNow ? Math.min(LAST_HOUR, Math.ceil(nowHours + LOOKAHEAD_HOURS)) : LAST_HOUR
+  // Every day, today included, runs the whole 6am to 2am; today opens scrolled near now
+  const first = FIRST_HOUR
+  const last = LAST_HOUR
   const hours = useMemo(() => Array.from({ length: last - first }, (_, i) => first + i), [first, last])
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
   // Routine steps are listed on their parent's card, not drawn on the grid
