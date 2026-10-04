@@ -927,8 +927,10 @@ function DayPage() {
                     onChangeText={setDraft}
                     placeholder="Add a todo"
                     placeholderTextColor={c.muted}
-                    // Adding opens the full list, scrolled down to this field once the keyboard is up
+                    // Adding to a day with more than 4 todos opens the full list, scrolled
+                    // down to this field once the keyboard is up
                     onFocus={() => {
+                      if (allTodos || todos.length <= 4) return
                       setAllTodos(true)
                       setTimeout(() => agendaScroll.current?.scrollToEnd({ animated: true }), 300)
                     }}
