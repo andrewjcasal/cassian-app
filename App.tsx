@@ -275,6 +275,7 @@ function DayPage() {
   const [allTodos, setAllTodos] = useState(false)
   useEffect(() => setAllTodos(false), [tab, day])
   const shownTodos = allTodos ? todos : todos.slice(0, TODO_PREVIEW)
+  const splitAdd = !allTodos && todos.length > TODO_PREVIEW
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   // Swiping sideways on the agenda moves a day (swipeDays: left is the next day).
@@ -908,7 +909,11 @@ function DayPage() {
               </>
             ) : null}
             {tab === 'todos' ? (
-              <View style={styles.card}>
+              // With a "View all" row, the list and "Add a todo" are two cards; otherwise one.
+              // Only styles change between the two, so the field keeps focus when tapping it
+              // opens the full list.
+              <View style={splitAdd ? null : styles.card}>
+              <View style={splitAdd ? styles.card : null}>
                 <TodoList
                   todos={shownTodos}
                   today={today}
@@ -926,7 +931,9 @@ function DayPage() {
                     <ChevronRight size={16} color={c.accent} />
                   </Pressable>
                 ) : null}
-                <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
+              </View>
+              <View style={splitAdd ? [styles.card, styles.addCard] : null}>
+                <View style={[styles.addRow, !splitAdd && todos.length > 0 && styles.addRowDivider]}>
                   <TextInput
                     style={styles.addInput}
                     value={draft}
@@ -947,6 +954,7 @@ function DayPage() {
                     <Plus size={20} color={c.accent} />
                   </Pressable>
                 </View>
+              </View>
               </View>
             ) : (
               <DayGrid
@@ -2809,6 +2817,7 @@ const styles = StyleSheet.create({
   overdueCard: { borderColor: c.now, marginBottom: 6 },
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
+  addCard: { marginTop: 8 },
   backButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   backText: { fontSize: 16, fontWeight: '600', color: c.accent },
   viewAllRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8 },
