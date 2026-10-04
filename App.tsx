@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Animated,
@@ -1410,7 +1410,7 @@ function AddTodoCard({
       </Text>
       <View style={styles.sliderRow}>
         <Text style={styles.sliderLabel}>Start</Text>
-        <Slider
+        <SteadySlider
           style={styles.slider}
           value={offset}
           minimumValue={-START_SLIDER_RANGE}
@@ -1425,7 +1425,7 @@ function AddTodoCard({
       </View>
       <View style={styles.sliderRow}>
         <Text style={styles.sliderLabel}>Duration</Text>
-        <Slider
+        <SteadySlider
           style={styles.slider}
           value={minutes}
           minimumValue={SLIDER_STEP}
@@ -1710,6 +1710,23 @@ function HabitHistory({
   )
 }
 
+// The slider draws its handle at the start on its first frame, then jumps to
+// its value once it has measured itself. This keeps it invisible until it has
+// laid out, so it appears already in place.
+function SteadySlider(props: ComponentProps<typeof Slider>) {
+  const [ready, setReady] = useState(false)
+  return (
+    <Slider
+      {...props}
+      style={[props.style, !ready && styles.invisible]}
+      onLayout={(e) => {
+        props.onLayout?.(e)
+        if (!ready) requestAnimationFrame(() => setReady(true))
+      }}
+    />
+  )
+}
+
 // How many days a habit card's Context shows before View all
 const CONTEXT_PREVIEW_DAYS = 3
 
@@ -1882,7 +1899,7 @@ function DetailCard({
           ) : (
             <View style={styles.sliderRow}>
               <Text style={styles.sliderLabel}>Start</Text>
-              <Slider
+              <SteadySlider
                 style={styles.slider}
                 value={offset}
                 minimumValue={-START_SLIDER_RANGE}
@@ -1903,7 +1920,7 @@ function DetailCard({
 
           <View style={styles.sliderRow}>
             <Text style={styles.sliderLabel}>Duration</Text>
-            <Slider
+            <SteadySlider
               style={styles.slider}
               value={minutes}
               minimumValue={SLIDER_STEP}
@@ -2553,6 +2570,7 @@ const styles = StyleSheet.create({
   subRow: { paddingLeft: 24 },
   contextDay: { paddingHorizontal: 8, paddingTop: 6 },
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
+  invisible: { opacity: 0 },
   viewAll: { fontSize: 14, fontWeight: '600', color: c.accent, paddingHorizontal: 8, paddingTop: 8 },
   nightBefore: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
   nightBeforeText: { fontSize: 12, fontWeight: '700', color: c.muted },
