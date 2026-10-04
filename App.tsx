@@ -625,8 +625,9 @@ function DayPage() {
     await saveMoves(plan.moves)
   }
 
-  // A Help option tracks on today's agenda: a block starting now, with the todos
-  // and habits not finished pushed after it (interruptPlan). Then show it.
+  // A Help option tracks on today's agenda as an event starting now (fixed, light
+  // blue, no done state; its card's Duration sets how long), with the todos and
+  // habits not finished pushed after it (interruptPlan). Then show it.
   const trackHelp = async (name: string, option: string) => {
     const todayItems = await fetchDayItems(today)
     const plan = interruptPlan(todayItems, nowHours(), HELP_MINUTES / 60)
@@ -635,7 +636,7 @@ function DayPage() {
       ...toStored(today, plan.start, plan.end),
       title: `${name}: ${option}`,
       kind: 'personal',
-      source: 'help',
+      source: 'event',
     })
     if (error) return setError(error.message)
     setTab('agenda')
@@ -874,8 +875,8 @@ const HELP = [
   { name: 'Theo', options: ['Open window', 'Puzzles'] },
   { name: 'Cat Fight', options: ['Play'] },
 ]
-// How long a Help block starts out; Done now ends it at the real time
-const HELP_MINUTES = 15
+// How long a Help event starts out; its card's Duration slider changes it
+const HELP_MINUTES = 5
 
 // Habits with a routine: their card shows a small card per timed step, and
 // tapping one starts the full-page timer from that step. Set here in code.
@@ -993,6 +994,8 @@ function HabitsScreen({
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Habit | null>(null)
   const [adding, setAdding] = useState(false)
+  // A Help card's list of sub-events
+  const [helpOpen, setHelpOpen] = useState<(typeof HELP)[number] | null>(null)
   // Every habit's blocks, loaded with the list so a habit's history is ready the
   // moment its card opens
   const [blocksByHabit, setBlocksByHabit] = useState<Map<string, HabitBlock[]>>(new Map())
@@ -1093,9 +1096,40 @@ function HabitsScreen({
           </View>
         ))}
 
+        <Text style={styles.sectionLabel}>HELP EVENTS</Text>
+        <View style={styles.card}>
+          {HELP.map((h) => (
+            <Pressable key={h.name} style={styles.todoRow} onPress={() => setHelpOpen(h)}>
+              <Text style={[styles.todoText, { flex: 1 }]}>{h.name}</Text>
+              <Text style={styles.minutesLabel}>
+                {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
+              </Text>
+              <ChevronRight size={18} color={c.muted} />
+            </Pressable>
+          ))}
+        </View>
+
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
+      <Modal visible={helpOpen !== null} transparent animationType="none" onRequestClose={() => setHelpOpen(null)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setHelpOpen(null)}>
+          {helpOpen ? (
+            // Claims taps on the card so only the backdrop closes it
+            <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+              <Text style={styles.detailTitle}>{helpOpen.name}</Text>
+              <Text style={styles.sectionLabel}>EVENTS</Text>
+              {helpOpen.options.map((option) => (
+                <View key={option} style={styles.partRow}>
+                  <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
+                  <Text style={styles.minutesLabel}>{HELP_MINUTES} min</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Pressable>
+      </Modal>
+
       <Modal visible={adding} transparent animationType="none" onRequestClose={() => setAdding(false)}>
         {/* The name field opens the keyboard, so the card rises to sit above it */}
         <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
