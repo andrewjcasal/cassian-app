@@ -8,7 +8,8 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.andrewcasal.cassian3"
+      "bundleIdentifier": "com.andrewcasal.cassian3",
+      "appleTeamId": "A8MD23P8VC"
     },
     "android": {
       "adaptiveIcon": {
