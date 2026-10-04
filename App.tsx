@@ -1729,6 +1729,50 @@ function HabitHistory({
   )
 }
 
+// How many days a habit card's Context shows before View all
+const CONTEXT_PREVIEW_DAYS = 3
+
+// Days of a habit's tied events: each day's heading with when the habit was done
+// the night before, then that day's events
+function ContextDays({
+  days,
+  nights,
+  habitTitle,
+}: {
+  days: { day: string; rows: { title: string; start: number; end: number }[] }[]
+  nights: { logical_day: string; done: boolean; done_at: string | null }[]
+  habitTitle: string
+}) {
+  return (
+    <>
+      {days.map((g) => {
+        const night = nightBefore(nights, g.day)
+        return (
+          <View key={g.day} style={styles.contextDay}>
+            <View style={styles.contextHeader}>
+              <Text style={[styles.sectionLabel, { flex: 1 }]}>{dayLabel(g.day).toUpperCase()}</Text>
+              {night === null ? null : (
+                <View style={styles.nightBefore} accessibilityLabel={`${habitTitle} the night before`}>
+                  <Moon size={12} color={c.muted} />
+                  <Text style={styles.nightBeforeText}>{night === 'not done' ? 'not done' : clock(night)}</Text>
+                </View>
+              )}
+            </View>
+            {g.rows.map((r, i) => (
+              <View key={`${r.title}-${r.start}-${i}`} style={styles.partRow}>
+                <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
+                <Text style={styles.minutesLabel}>
+                  {clock(r.start)} · {Math.round((r.end - r.start) * 60)} min
+                </Text>
+              </View>
+            ))}
+          </View>
+        )
+      })}
+    </>
+  )
+}
+
 // Slider steps for a block's length, in minutes
 const SLIDER_STEP = 5
 const SLIDER_MAX = 240
@@ -1759,6 +1803,8 @@ function DetailCard({
 }) {
   // Context: the Help events tied to this habit, day by day
   const [showContext, setShowContext] = useState(false)
+  // The full page of every day, opened from View all
+  const [showAll, setShowAll] = useState(false)
   const [context, setContext] = useState<ReturnType<typeof groupByDay<{ title: string; day: string; start: number; end: number }>> | null>(null)
   const contextTitles = detail.habitId
     ? help.flatMap((g) => g.options.filter((o) => g.habits[o] === detail.habitId).map((o) => `${g.name}: ${o}`))
@@ -1810,34 +1856,28 @@ function DetailCard({
           {!contextTitles.length ? (
             <Text style={styles.minutesLabel}>No Help events are tied to this habit yet. Link one on Planning.</Text>
           ) : context && context.length ? (
-            <ScrollView style={styles.dropdownList} nestedScrollEnabled>
-              {context.map((g) => (
-                <View key={g.day} style={styles.contextDay}>
-                  <View style={styles.contextHeader}>
-                    <Text style={[styles.sectionLabel, { flex: 1 }]}>{dayLabel(g.day).toUpperCase()}</Text>
-                    {(() => {
-                      // When this habit was done the night before
-                      const night = nightBefore(habitNights, g.day)
-                      if (night === null) return null
-                      return (
-                        <View style={styles.nightBefore} accessibilityLabel={`${detail.title} the night before`}>
-                          <Moon size={12} color={c.muted} />
-                          <Text style={styles.nightBeforeText}>{night === 'not done' ? 'not done' : clock(night)}</Text>
-                        </View>
-                      )
-                    })()}
+            <>
+              <ContextDays days={context.slice(0, CONTEXT_PREVIEW_DAYS)} nights={habitNights} habitTitle={detail.title} />
+              {context.length > CONTEXT_PREVIEW_DAYS ? (
+                <Pressable onPress={() => setShowAll(true)} hitSlop={8}>
+                  <Text style={styles.viewAll}>View all ({context.length} days)</Text>
+                </Pressable>
+              ) : null}
+              <Modal visible={showAll} animationType="slide" onRequestClose={() => setShowAll(false)}>
+                <SafeAreaView style={styles.screen}>
+                  <View style={[styles.header, styles.fixedHeader]}>
+                    <Pressable onPress={() => setShowAll(false)} hitSlop={10} accessibilityLabel="Back">
+                      <ChevronLeft size={22} color={c.ink} />
+                    </Pressable>
+                    <Text style={styles.title}>{detail.title}</Text>
+                    <View style={{ width: 22 }} />
                   </View>
-                  {g.rows.map((r, i) => (
-                    <View key={`${r.title}-${r.start}-${i}`} style={styles.partRow}>
-                      <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
-                      <Text style={styles.minutesLabel}>
-                        {clock(r.start)} · {Math.round((r.end - r.start) * 60)} min
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ))}
-            </ScrollView>
+                  <ScrollView contentContainerStyle={styles.page}>
+                    <ContextDays days={context} nights={habitNights} habitTitle={detail.title} />
+                  </ScrollView>
+                </SafeAreaView>
+              </Modal>
+            </>
           ) : context ? (
             <Text style={styles.minutesLabel}>None tracked yet.</Text>
           ) : null}
@@ -2531,6 +2571,7 @@ const styles = StyleSheet.create({
   subRow: { paddingLeft: 24 },
   contextDay: { paddingHorizontal: 8, paddingTop: 6 },
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
+  viewAll: { fontSize: 14, fontWeight: '600', color: c.accent, paddingHorizontal: 8, paddingTop: 8 },
   nightBefore: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
   nightBeforeText: { fontSize: 12, fontWeight: '700', color: c.muted },
   titleWithAdd: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
