@@ -271,6 +271,35 @@ function DayPage() {
   // agenda comes into view, used once the scroll content has its size.
   const agendaScroll = useRef<ScrollView>(null)
   const scrollToNowPending = useRef(true)
+  // The Help events and sub-events, shared by the Help tab and Planning
+  const [help, setHelp] = useState<HelpGroup[]>([])
+  const loadHelp = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('cass_help_items')
+      .select('group_name,name,minutes')
+      .order('created_at')
+      .order('sort_order')
+    if (error) return setError(error.message)
+    const groups: HelpGroup[] = []
+    for (const row of data ?? []) {
+      let g = groups.find((x) => x.name === row.group_name)
+      if (!g) groups.push((g = { name: row.group_name, options: [], minutes: {} }))
+      g.options.push(row.name)
+      g.minutes[row.name] = row.minutes
+    }
+    setHelp(groups)
+  }, [])
+  useEffect(() => {
+    loadHelp()
+  }, [loadHelp])
+  const addHelpSub = async (group: string, name: string) => {
+    const count = help.find((g) => g.name === group)?.options.length ?? 0
+    const { error } = await supabase
+      .from('cass_help_items')
+      .insert({ group_name: group, name, minutes: HELP_MINUTES, sort_order: count + 1 })
+    if (error) return setError(error.message)
+    loadHelp()
+  }
   // The time tapped in the agenda's right strip, for a new todo there
   const [addAt, setAddAt] = useState<number | null>(null)
   // The routine timer that's running, if any (full page)
@@ -630,7 +659,8 @@ function DayPage() {
   // habits not finished pushed after it (interruptPlan). Then show it.
   const trackHelp = async (name: string, option: string) => {
     const todayItems = await fetchDayItems(today)
-    const plan = interruptPlan(todayItems, nowHours(), HELP_MINUTES / 60)
+    const minutes = help.find((g) => g.name === name)?.minutes[option] ?? HELP_MINUTES
+    const plan = interruptPlan(todayItems, nowHours(), minutes / 60)
     if ('error' in plan) return setError(plan.error)
     const { error } = await supabase.from('cass_time_blocks').insert({
       ...toStored(today, plan.start, plan.end),
@@ -663,10 +693,16 @@ function DayPage() {
     <View style={styles.screen}>
       {/* Planning (habits) stays mounted, hidden on other tabs, so it's loaded before you open it */}
       <View style={tab === 'planning' ? styles.screenFill : styles.hidden}>
-        <HabitsScreen active={tab === 'planning'} today={today} onSettings={setSettingsMenu} />
+        <HabitsScreen
+          active={tab === 'planning'}
+          today={today}
+          help={help}
+          onAddHelpSub={addHelpSub}
+          onSettings={setSettingsMenu}
+        />
       </View>
       {tab === 'planning' ? null : tab === 'help' ? (
-        <HelpScreen onSettings={setSettingsMenu} onTrack={trackHelp} />
+        <HelpScreen help={help} onSettings={setSettingsMenu} onTrack={trackHelp} />
       ) : (
       <View style={styles.screenFill} {...(tab === 'agenda' ? daySwipe.panHandlers : {})}>
         {/* Stays put while the agenda or todos scroll underneath */}
@@ -870,12 +906,10 @@ const TABS = [
   { key: 'help', label: 'Help', Icon: LifeBuoy },
 ] as const
 
-// The Help tab's cards and what each one can do. Set here in code for now.
-const HELP = [
-  { name: 'Theo', options: ['Open window', 'Puzzles'] },
-  { name: 'Cat Fight', options: ['Play'] },
-]
-// How long a Help event starts out; its card's Duration slider changes it
+// A Help event (Theo) and its sub-events with their starting lengths, from
+// cass_help_items
+type HelpGroup = { name: string; options: string[]; minutes: Record<string, number> }
+// How long a new sub-event starts out; a tracked event's Duration slider changes it
 const HELP_MINUTES = 5
 
 // Habits with a routine: their card shows a small card per timed step, and
@@ -933,20 +967,22 @@ function ScreenHeader({
 // Help: a small card per person or pet; tapping one lists what you can do, and
 // picking one tracks it on today's agenda starting now
 function HelpScreen({
+  help,
   onSettings,
   onTrack,
 }: {
+  help: HelpGroup[]
   onSettings: (at: { x: number; y: number }) => void
   onTrack: (name: string, option: string) => void
 }) {
-  const [open, setOpen] = useState<(typeof HELP)[number] | null>(null)
+  const [open, setOpen] = useState<HelpGroup | null>(null)
 
   return (
     <>
       <ScrollView contentContainerStyle={styles.page}>
         <ScreenHeader title="Help" onSettings={onSettings} />
         <View style={styles.helpGrid}>
-          {HELP.map((h) => (
+          {help.map((h) => (
             <Pressable key={h.name} style={styles.helpCard} onPress={() => setOpen(h)}>
               <Text style={styles.helpCardText}>{h.name}</Text>
             </Pressable>
@@ -983,8 +1019,12 @@ function HelpScreen({
 function HabitsScreen({
   active,
   today,
+  help,
+  onAddHelpSub,
   onSettings,
 }: {
+  help: HelpGroup[]
+  onAddHelpSub: (group: string, name: string) => void
   // Whether the Habits tab is showing; opening it refreshes in the background
   active: boolean
   today: string
@@ -994,7 +1034,10 @@ function HabitsScreen({
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Habit | null>(null)
   const [adding, setAdding] = useState(false)
-  // Which Help events are expanded, and the sub-event whose card is open
+  // Which Help events are expanded, the sub-event whose card is open, and the
+  // Help event a new sub-event is being added to
+  const [addingSub, setAddingSub] = useState<string | null>(null)
+  const [subName, setSubName] = useState('')
   const [helpExpanded, setHelpExpanded] = useState<Set<string>>(new Set())
   const [subEvent, setSubEvent] = useState<{ name: string; option: string } | null>(null)
   // Every tracked Help event, by its title ("Theo: Open window"), loaded with the list
@@ -1010,11 +1053,14 @@ function HabitsScreen({
     Promise.all([
       supabase.from('cass_habits').select('id,title,minutes,frequency,weekday,start_time').order('sort_order'),
       supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done').not('habit_id', 'is', null),
-      supabase
-        .from('cass_time_blocks')
-        .select('title,day,start_time,end_time')
-        .eq('source', 'event')
-        .in('title', HELP.flatMap((h) => h.options.map((o) => `${h.name}: ${o}`))),
+      // Skipped until the Help list has loaded (an empty list isn't a valid filter)
+      help.length
+        ? supabase
+            .from('cass_time_blocks')
+            .select('title,day,start_time,end_time')
+            .eq('source', 'event')
+            .in('title', help.flatMap((h) => h.options.map((o) => `${h.name}: ${o}`)))
+        : Promise.resolve({ data: [] as { title: string; day: string; start_time: string; end_time: string | null }[], error: null }),
     ]).then(([habitRes, blockRes, helpRes]) => {
       const err = habitRes.error ?? blockRes.error ?? helpRes.error
       const byTitle = new Map<string, { day: string; start: number; end: number }[]>()
@@ -1034,7 +1080,7 @@ function HabitsScreen({
       setBlocksByHabit(byHabit)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+  }, [active, help])
 
   const addHabit = async (draft: Omit<Habit, 'id'>) => {
     setAdding(false)
@@ -1113,7 +1159,7 @@ function HabitsScreen({
 
         <Text style={styles.sectionLabel}>HELP EVENTS</Text>
         <View style={styles.card}>
-          {HELP.map((h) => {
+          {help.map((h) => {
             const open = helpExpanded.has(h.name)
             return (
               <View key={h.name}>
@@ -1133,6 +1179,16 @@ function HabitsScreen({
                   <Text style={styles.minutesLabel}>
                     {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
                   </Text>
+                  <Pressable
+                    onPress={() => {
+                      setSubName('')
+                      setAddingSub(h.name)
+                    }}
+                    hitSlop={10}
+                    accessibilityLabel={`Add a sub-event to ${h.name}`}
+                  >
+                    <Plus size={18} color={c.accent} />
+                  </Pressable>
                   {open ? <ChevronDown size={18} color={c.muted} /> : <ChevronRight size={18} color={c.muted} />}
                 </Pressable>
                 {open
@@ -1143,7 +1199,7 @@ function HabitsScreen({
                         onPress={() => setSubEvent({ name: h.name, option })}
                       >
                         <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
-                        <Text style={styles.minutesLabel}>{HELP_MINUTES} min</Text>
+                        <Text style={styles.minutesLabel}>{h.minutes[option] ?? HELP_MINUTES} min</Text>
                       </Pressable>
                     ))
                   : null}
@@ -1155,6 +1211,43 @@ function HabitsScreen({
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
+      <Modal visible={addingSub !== null} transparent animationType="none" onRequestClose={() => setAddingSub(null)}>
+        <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.detailBackdrop} onPress={() => setAddingSub(null)}>
+            {addingSub ? (
+              // Claims taps on the card so only the backdrop closes it
+              <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+                <Text style={styles.detailTitle}>New {addingSub} event</Text>
+                <TextInput
+                  style={styles.input}
+                  value={subName}
+                  onChangeText={setSubName}
+                  placeholder="Name"
+                  placeholderTextColor={c.muted}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    if (!subName.trim()) return
+                    onAddHelpSub(addingSub, subName.trim())
+                    setAddingSub(null)
+                  }}
+                />
+                <Pressable
+                  style={[styles.submitButton, !subName.trim() && styles.buttonDisabled]}
+                  disabled={!subName.trim()}
+                  onPress={() => {
+                    onAddHelpSub(addingSub, subName.trim())
+                    setAddingSub(null)
+                  }}
+                >
+                  <Text style={[styles.doneButtonText, !subName.trim() && styles.buttonDisabledText]}>Add</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <Modal visible={subEvent !== null} transparent animationType="none" onRequestClose={() => setSubEvent(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setSubEvent(null)}>
           {subEvent ? (
@@ -1162,7 +1255,8 @@ function HabitsScreen({
             <View style={[styles.detailCard, styles.historyCard]} onStartShouldSetResponder={() => true}>
               <Text style={styles.detailTitle}>{subEvent.option}</Text>
               <Text style={styles.detailDay}>
-                {subEvent.name} · {HELP_MINUTES} min to start
+                {subEvent.name} ·{' '}
+                {help.find((g) => g.name === subEvent.name)?.minutes[subEvent.option] ?? HELP_MINUTES} min to start
               </Text>
               {(() => {
                 const times = helpHistory.get(`${subEvent.name}: ${subEvent.option}`) ?? []
