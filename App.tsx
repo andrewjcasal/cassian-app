@@ -276,16 +276,18 @@ function DayPage() {
   const loadHelp = useCallback(async () => {
     const { data, error } = await supabase
       .from('cass_help_items')
-      .select('group_name,name,minutes')
+      .select('id,group_name,name,minutes,habit_id')
       .order('created_at')
       .order('sort_order')
     if (error) return setError(error.message)
     const groups: HelpGroup[] = []
     for (const row of data ?? []) {
       let g = groups.find((x) => x.name === row.group_name)
-      if (!g) groups.push((g = { name: row.group_name, options: [], minutes: {} }))
+      if (!g) groups.push((g = { name: row.group_name, options: [], minutes: {}, ids: {}, habits: {} }))
       g.options.push(row.name)
       g.minutes[row.name] = row.minutes
+      g.ids[row.name] = row.id
+      g.habits[row.name] = row.habit_id
     }
     setHelp(groups)
   }, [])
@@ -299,6 +301,14 @@ function DayPage() {
       .insert({ group_name: group, name, minutes: HELP_MINUTES, sort_order: count + 1 })
     if (error) return setError(error.message)
     loadHelp()
+  }
+  // Ties a Help sub-event to a habit (or none), so the habit's card lists it
+  const setHelpHabit = async (group: string, option: string, habitId: string | null) => {
+    const id = help.find((g) => g.name === group)?.ids[option]
+    if (!id) return
+    setHelp((list) => list.map((g) => (g.name === group ? { ...g, habits: { ...g.habits, [option]: habitId } } : g)))
+    const { error } = await supabase.from('cass_help_items').update({ habit_id: habitId }).eq('id', id)
+    if (error) setError(error.message)
   }
   // The time tapped in the agenda's right strip, for a new todo there
   const [addAt, setAddAt] = useState<number | null>(null)
@@ -698,6 +708,7 @@ function DayPage() {
           today={today}
           help={help}
           onAddHelpSub={addHelpSub}
+          onHelpHabit={setHelpHabit}
           onSettings={setSettingsMenu}
         />
       </View>
@@ -908,7 +919,14 @@ const TABS = [
 
 // A Help event (Theo) and its sub-events with their starting lengths, from
 // cass_help_items
-type HelpGroup = { name: string; options: string[]; minutes: Record<string, number> }
+type HelpGroup = {
+  name: string
+  options: string[]
+  minutes: Record<string, number>
+  // Each sub-event's row id, and the habit it's tied to (if any)
+  ids: Record<string, string>
+  habits: Record<string, string | null>
+}
 // How long a new sub-event starts out; a tracked event's Duration slider changes it
 const HELP_MINUTES = 5
 
@@ -1021,10 +1039,12 @@ function HabitsScreen({
   today,
   help,
   onAddHelpSub,
+  onHelpHabit,
   onSettings,
 }: {
   help: HelpGroup[]
   onAddHelpSub: (group: string, name: string) => void
+  onHelpHabit: (group: string, option: string, habitId: string | null) => void
   // Whether the Habits tab is showing; opening it refreshes in the background
   active: boolean
   today: string
@@ -1038,6 +1058,7 @@ function HabitsScreen({
   // Help event a new sub-event is being added to
   const [addingSub, setAddingSub] = useState<string | null>(null)
   const [subName, setSubName] = useState('')
+  const [pickingHabit, setPickingHabit] = useState(false)
   const [helpExpanded, setHelpExpanded] = useState<Set<string>>(new Set())
   const [subEvent, setSubEvent] = useState<{ name: string; option: string } | null>(null)
   // Every tracked Help event, by its title ("Theo: Open window"), loaded with the list
@@ -1175,20 +1196,25 @@ function HabitsScreen({
                   }
                   accessibilityState={{ expanded: open }}
                 >
-                  <Text style={[styles.todoText, { flex: 1 }]}>{h.name}</Text>
+                  <View style={styles.titleWithAdd}>
+                    <Text style={styles.todoText}>{h.name}</Text>
+                    {/* Adding a sub-event shows only while the row is expanded */}
+                    {open ? (
+                      <Pressable
+                        onPress={() => {
+                          setSubName('')
+                          setAddingSub(h.name)
+                        }}
+                        hitSlop={10}
+                        accessibilityLabel={`Add a sub-event to ${h.name}`}
+                      >
+                        <Plus size={18} color={c.accent} />
+                      </Pressable>
+                    ) : null}
+                  </View>
                   <Text style={styles.minutesLabel}>
                     {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
                   </Text>
-                  <Pressable
-                    onPress={() => {
-                      setSubName('')
-                      setAddingSub(h.name)
-                    }}
-                    hitSlop={10}
-                    accessibilityLabel={`Add a sub-event to ${h.name}`}
-                  >
-                    <Plus size={18} color={c.accent} />
-                  </Pressable>
                   {open ? <ChevronDown size={18} color={c.muted} /> : <ChevronRight size={18} color={c.muted} />}
                 </Pressable>
                 {open
@@ -1259,6 +1285,41 @@ function HabitsScreen({
                 {help.find((g) => g.name === subEvent.name)?.minutes[subEvent.option] ?? HELP_MINUTES} min to start
               </Text>
               {(() => {
+                const habitId = help.find((g) => g.name === subEvent.name)?.habits[subEvent.option] ?? null
+                const current = habits.find((h) => h.id === habitId)
+                return (
+                  <>
+                    <View style={styles.sliderRow}>
+                      <Text style={styles.sliderLabel}>Habit</Text>
+                      <Pressable style={styles.dropdown} onPress={() => setPickingHabit(!pickingHabit)} accessibilityLabel="Habit">
+                        <Text style={styles.dropdownText}>{current ? current.title : 'None'}</Text>
+                        <ChevronDown size={16} color={c.muted} />
+                      </Pressable>
+                    </View>
+                    {pickingHabit ? (
+                      <ScrollView style={styles.dropdownList} nestedScrollEnabled>
+                        {[null, ...habits].map((h) => {
+                          const id = h ? h.id : null
+                          const active = id === habitId
+                          return (
+                            <Pressable
+                              key={id ?? 'none'}
+                              style={[styles.dropdownItem, active && styles.segmentItemActive]}
+                              onPress={() => {
+                                setPickingHabit(false)
+                                if (!active) onHelpHabit(subEvent.name, subEvent.option, id)
+                              }}
+                            >
+                              <Text style={[styles.dropdownText, active && styles.segmentTextActive]}>{h ? h.title : 'None'}</Text>
+                            </Pressable>
+                          )
+                        })}
+                      </ScrollView>
+                    ) : null}
+                  </>
+                )
+              })()}
+              {(() => {
                 const times = helpHistory.get(`${subEvent.name}: ${subEvent.option}`) ?? []
                 return times.length ? (
                   <ScrollView style={styles.historyList}>
@@ -1294,6 +1355,10 @@ function HabitsScreen({
           {selected ? (
             <HabitHistory
               habit={selected}
+              related={help
+                .flatMap((g) => g.options.filter((o) => g.habits[o] === selected.id).map((o) => `${g.name}: ${o}`))
+                .flatMap((title) => (helpHistory.get(title) ?? []).map((t) => ({ title, ...t })))
+                .sort((x, y) => (x.day === y.day ? y.start - x.start : x.day < y.day ? 1 : -1))}
               blocks={blocksByHabit.get(selected.id) ?? []}
               today={today}
               onSchedule={changeSchedule}
@@ -1494,12 +1559,15 @@ function HabitHistory({
   today,
   onSchedule,
   onEdit,
+  related,
 }: {
   habit: Habit
   blocks: HabitBlock[]
   today: string
   onSchedule: (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => void
   onEdit: (habit: Habit, patch: { minutes?: number; start_time?: string | null }) => void
+  // Tracked Help events tied to this habit, newest first
+  related: { title: string; day: string; start: number; end: number }[]
 }) {
   const [pickingStart, setPickingStart] = useState(false)
   const rows = habitHistory(blocks, today, habit.frequency === 'weekly' ? habit.weekday : null)
@@ -1629,6 +1697,19 @@ function HabitHistory({
       ) : (
         <Text style={styles.historySummary}>No days yet</Text>
       )}
+      {related.length ? (
+        <View style={styles.parts}>
+          <Text style={styles.sectionLabel}>RELATED EVENTS</Text>
+          {related.map((r, i) => (
+            <View key={`${r.title}-${r.day}-${r.start}-${i}`} style={styles.partRow}>
+              <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
+              <Text style={styles.minutesLabel}>
+                {r.day === today ? 'Today' : dayLabel(r.day)} · {clock(r.start)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -2356,6 +2437,7 @@ const styles = StyleSheet.create({
   weekday: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: c.line },
   historyList: { flexGrow: 0 },
   subRow: { paddingLeft: 24 },
+  titleWithAdd: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   dropdown: {
     flex: 1,
     flexDirection: 'row',
