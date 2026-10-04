@@ -25,6 +25,7 @@ import {
   extendStep,
   resumeTimer,
   groupByDay,
+  nightBefore,
   habitHistory,
   routineFrom,
   habitStartHours,
@@ -430,6 +431,21 @@ test('groupByDay groups events by day, newest day first and latest first within 
   assert.deepEqual(grouped.map((g) => g.day), ['2026-10-03', '2026-10-02'])
   assert.deepEqual(grouped[0].rows.map((r) => r.title), ['Cat Fight: Play', 'Theo: Open window'])
   assert.deepEqual(grouped[1].rows.map((r) => r.start), [at(24, 10), at(23, 30)])
+})
+
+test('nightBefore finds when the habit was done the night before each day', () => {
+  const blocks = [
+    // Friday's Shut down, done at 11:58pm
+    { logical_day: '2026-10-02', done: true, done_at: new Date(2026, 9, 2, 23, 58).toISOString() },
+    // Thursday's, done after midnight (12:40am Friday) - still Thursday night
+    { logical_day: '2026-10-01', done: true, done_at: new Date(2026, 9, 2, 0, 40).toISOString() },
+    // Wednesday's, never done
+    { logical_day: '2026-09-30', done: false, done_at: null },
+  ]
+  assert.equal(nightBefore(blocks, '2026-10-03'), at(23, 58))
+  assert.equal(nightBefore(blocks, '2026-10-02'), at(24, 40))
+  assert.equal(nightBefore(blocks, '2026-10-01'), 'not done')
+  assert.equal(nightBefore(blocks, '2026-09-30'), null) // no block that night
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

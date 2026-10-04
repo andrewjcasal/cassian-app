@@ -637,3 +637,18 @@ export function groupByDay<R extends { day: string; start: number }>(rows: R[]) 
     .sort(([a], [b]) => (a < b ? 1 : -1))
     .map(([day, list]) => ({ day, rows: [...list].sort((x, y) => y.start - x.start) }))
 }
+
+// When a habit was done the night before a day, as hours into that night (an
+// after-midnight finish reads past 24), 'not done' if its block wasn't, or null
+// if it had no block that night
+export function nightBefore(
+  blocks: { logical_day: string; done: boolean; done_at: string | null }[],
+  day: string,
+): number | 'not done' | null {
+  const night = shiftDay(day, -1)
+  const block = blocks.find((b) => b.logical_day === night)
+  if (!block) return null
+  if (!block.done || !block.done_at) return 'not done'
+  const at = logicalNow(new Date(block.done_at))
+  return at.day === night ? at.hours : at.hours + 24
+}

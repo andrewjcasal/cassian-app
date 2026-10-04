@@ -29,6 +29,7 @@ import {
   Clock,
   GripVertical,
   ListTodo,
+  Moon,
   LogOut,
   MoreHorizontal,
   NotebookPen,
@@ -65,6 +66,7 @@ import {
   advanceTimer,
   extendStep,
   groupByDay,
+  nightBefore,
   habitHistory,
   resumeTimer,
   routineFrom,
@@ -1761,6 +1763,8 @@ function DetailCard({
   const contextTitles = detail.habitId
     ? help.flatMap((g) => g.options.filter((o) => g.habits[o] === detail.habitId).map((o) => `${g.name}: ${o}`))
     : []
+  // The habit's own blocks, for when it was done the night before each day
+  const [habitNights, setHabitNights] = useState<{ logical_day: string; done: boolean; done_at: string | null }[]>([])
   useEffect(() => {
     if (!showContext || !contextTitles.length) return
     supabase
@@ -1771,6 +1775,11 @@ function DetailCard({
       .then(({ data }) => {
         setContext(groupByDay((data ?? []).map((b) => ({ title: b.title, ...fromStored(b.day, b.start_time, b.end_time) }))))
       })
+    supabase
+      .from('cass_time_blocks')
+      .select('logical_day,done,done_at')
+      .eq('habit_id', detail.habitId!)
+      .then(({ data }) => setHabitNights(data ?? []))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showContext, contextTitles.join('|')])
   const routineSteps = (ROUTINES[detail.title] ?? []).filter((step) => step.minutes !== null)
@@ -1804,7 +1813,20 @@ function DetailCard({
             <ScrollView style={styles.dropdownList} nestedScrollEnabled>
               {context.map((g) => (
                 <View key={g.day} style={styles.contextDay}>
-                  <Text style={styles.sectionLabel}>{dayLabel(g.day).toUpperCase()}</Text>
+                  <View style={styles.contextHeader}>
+                    <Text style={[styles.sectionLabel, { flex: 1 }]}>{dayLabel(g.day).toUpperCase()}</Text>
+                    {(() => {
+                      // When this habit was done the night before
+                      const night = nightBefore(habitNights, g.day)
+                      if (night === null) return null
+                      return (
+                        <View style={styles.nightBefore} accessibilityLabel={`${detail.title} the night before`}>
+                          <Moon size={12} color={c.muted} />
+                          <Text style={styles.nightBeforeText}>{night === 'not done' ? 'not done' : clock(night)}</Text>
+                        </View>
+                      )
+                    })()}
+                  </View>
                   {g.rows.map((r, i) => (
                     <View key={`${r.title}-${r.start}-${i}`} style={styles.partRow}>
                       <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
@@ -2508,6 +2530,9 @@ const styles = StyleSheet.create({
   historyList: { flexGrow: 0 },
   subRow: { paddingLeft: 24 },
   contextDay: { paddingHorizontal: 8, paddingTop: 6 },
+  contextHeader: { flexDirection: 'row', alignItems: 'center' },
+  nightBefore: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
+  nightBeforeText: { fontSize: 12, fontWeight: '700', color: c.muted },
   titleWithAdd: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   dropdown: {
     flex: 1,
