@@ -7,7 +7,8 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.andrewcasal.cassian3"
     },
     "android": {
       "adaptiveIcon": {
@@ -20,6 +21,26 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-widgets",
+        {
+          "widgets": [
+            {
+              "name": "CassianDay",
+              "displayName": "Cassian",
+              "description": "Today's todos and Help events",
+              "ios": {
+                "supportedFamilies": [
+                  "systemLarge"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    ],
+    "scheme": "cassian3"
   }
 }

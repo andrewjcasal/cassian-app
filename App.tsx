@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   PanResponder,
   type PanResponderInstance,
@@ -41,6 +42,17 @@ import {
 } from 'lucide-react-native'
 import Slider from '@react-native-community/slider'
 import { supabase } from './src/supabase'
+import type { CassianDayProps } from './widgets/CassianDay'
+
+// The home screen widget only exists in the development build; Expo Go has no
+// widget native code, so it's loaded only if it's there.
+let cassianWidget: { updateSnapshot: (props: CassianDayProps) => void } | null = null
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  cassianWidget = require('./widgets/CassianDay').default
+} catch {
+  cassianWidget = null
+}
 import {
   type CalItem,
   type Move,
@@ -674,6 +686,46 @@ function DayPage() {
     setDay(today)
     await saveMoves(plan.moves, () => today)
   }
+
+  // The widget shows today's unfinished todos and habits and the Help events;
+  // it's refreshed whenever either changes
+  const todayTodos = byDay[today]?.todos
+  useEffect(() => {
+    if (!cassianWidget || !todayTodos) return
+    try {
+      cassianWidget.updateSnapshot({
+        dayLabel: dayLabel(today),
+        todos: [...todayTodos].sort((a, b) => a.start - b.start).map((t) => ({ title: t.title, time: clock(t.start) })),
+        help: help.map((g) => ({
+          name: g.name,
+          options: g.options.map((o) => ({
+            label: o,
+            url: `cassian3://help?name=${encodeURIComponent(g.name)}&option=${encodeURIComponent(o)}`,
+          })),
+        })),
+      })
+    } catch {
+      // No widget native code (Expo Go)
+    }
+  }, [todayTodos, help, today])
+
+  // Tapping a Help option in the widget opens cassian3://help?name=..&option=..,
+  // which tracks it like the Help tab does
+  const trackHelpRef = useRef(trackHelp)
+  trackHelpRef.current = trackHelp
+  useEffect(() => {
+    const handle = (url: string | null) => {
+      const m = url?.match(/^cassian3:\/\/help\?(.*)$/)
+      if (!m) return
+      const params = new URLSearchParams(m[1])
+      const name = params.get('name')
+      const option = params.get('option')
+      if (name && option) trackHelpRef.current(name, option)
+    }
+    Linking.getInitialURL().then(handle)
+    const sub = Linking.addEventListener('url', (e) => handle(e.url))
+    return () => sub.remove()
+  }, [])
 
   // Dragging a todo to a new spot re-packs the swapped range back to back from
   // where its first todo started, each keeping its own length.
