@@ -22,6 +22,7 @@ import type { Session } from '@supabase/supabase-js'
 import {
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   LifeBuoy,
@@ -66,6 +67,9 @@ import {
   habitHistory,
   resumeTimer,
   routineFrom,
+  habitStartHours,
+  habitStartValue,
+  startTimeOptions,
   swipeDays,
   switchRoutine,
   type RoutineStep,
@@ -333,7 +337,7 @@ function DayPage() {
       if (error) return setError(error.message), false
       const from = habitSearchFrom(day, today, nowHours())
       if (from === null) return false
-      const forDay = habitsForDay(habits ?? [], day).map((h) => ({ ...h, start: h.start_time ? hoursOf(h.start_time) : null }))
+      const forDay = habitsForDay(habits ?? [], day).map((h) => ({ ...h, start: h.start_time ? habitStartHours(h.start_time) : null }))
       const placements = placeHabits(current, forDay, from)
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
@@ -824,7 +828,15 @@ function DayPage() {
   )
 }
 
-type Habit = { id: string; title: string; minutes: number; frequency: 'daily' | 'weekly'; weekday: number | null }
+type Habit = {
+  id: string
+  title: string
+  minutes: number
+  frequency: 'daily' | 'weekly'
+  weekday: number | null
+  // A set time of day ("23:00:00"), or null to go in the first free gap
+  start_time: string | null
+}
 
 // One of a habit's blocks, with its 6am to 6am day and times
 type HabitBlock = { logical_day: string; done: boolean; start: number; end: number }
@@ -972,7 +984,7 @@ function HabitsScreen({
   useEffect(() => {
     if (!active && habits.length) return
     Promise.all([
-      supabase.from('cass_habits').select('id,title,minutes,frequency,weekday').order('sort_order'),
+      supabase.from('cass_habits').select('id,title,minutes,frequency,weekday,start_time').order('sort_order'),
       supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done').not('habit_id', 'is', null),
     ]).then(([habitRes, blockRes]) => {
       const err = habitRes.error ?? blockRes.error
@@ -993,7 +1005,7 @@ function HabitsScreen({
     const { data, error } = await supabase
       .from('cass_habits')
       .insert({ ...draft, sort_order: habits.length + 1 })
-      .select('id,title,minutes,frequency,weekday')
+      .select('id,title,minutes,frequency,weekday,start_time')
       .single()
     if (error) return setError(error.message)
     setHabits((list) => [...list, data])
@@ -1001,13 +1013,15 @@ function HabitsScreen({
 
   // Saves daily/weekly and the weekday. Unfinished blocks after today are cleared
   // so they get placed again on the right days as those days are opened.
-  const changeSchedule = async (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => {
-    const next = { ...habit, frequency, weekday: frequency === 'daily' ? null : weekday }
+  type HabitEdit = Partial<Pick<Habit, 'frequency' | 'weekday' | 'minutes' | 'start_time'>>
+  const editHabit = async (habit: Habit, patch: HabitEdit) => {
+    const next = { ...habit, ...patch }
+    if (next.frequency === 'daily') next.weekday = null
     setHabits((list) => list.map((h) => (h.id === habit.id ? next : h)))
     setSelected(next)
     const { error } = await supabase
       .from('cass_habits')
-      .update({ frequency: next.frequency, weekday: next.weekday })
+      .update({ frequency: next.frequency, weekday: next.weekday, minutes: next.minutes, start_time: next.start_time })
       .eq('id', habit.id)
     if (error) return setError(error.message)
     const cleared = await supabase
@@ -1025,6 +1039,9 @@ function HabitsScreen({
       return nextMap
     })
   }
+
+  const changeSchedule = (habit: Habit, frequency: Habit['frequency'], weekday: number | null) =>
+    editHabit(habit, { frequency, weekday })
 
   const sections = [
     { title: 'DAILY HABITS', list: habits.filter((h) => h.frequency === 'daily') },
@@ -1078,6 +1095,7 @@ function HabitsScreen({
               blocks={blocksByHabit.get(selected.id) ?? []}
               today={today}
               onSchedule={changeSchedule}
+              onEdit={editHabit}
             />
           ) : null}
         </Pressable>
@@ -1258,7 +1276,7 @@ function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }
         style={[styles.submitButton, !ready && styles.buttonDisabled]}
         disabled={!ready}
         onPress={() =>
-          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null })
+          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null, start_time: null })
         }
       >
         <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add habit</Text>
@@ -1273,12 +1291,15 @@ function HabitHistory({
   blocks,
   today,
   onSchedule,
+  onEdit,
 }: {
   habit: Habit
   blocks: HabitBlock[]
   today: string
   onSchedule: (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => void
+  onEdit: (habit: Habit, patch: { minutes?: number; start_time?: string | null }) => void
 }) {
+  const [pickingStart, setPickingStart] = useState(false)
   const rows = habitHistory(blocks, today, habit.frequency === 'weekly' ? habit.weekday : null)
 
   const past = rows.filter((r) => r.status !== 'pending')
@@ -1327,6 +1348,54 @@ function HabitHistory({
             })}
           </View>
         </>
+      ) : null}
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Length</Text>
+        <View style={styles.durations}>
+          {durationOptions(habit.minutes).map((m) => {
+            const active = m === habit.minutes
+            return (
+              <Pressable
+                key={m}
+                style={[styles.duration, active && styles.durationSelected]}
+                onPress={() => !active && onEdit(habit, { minutes: m })}
+                accessibilityLabel={`${m} minutes`}
+                accessibilityState={{ selected: active }}
+              >
+                <Text style={[styles.durationText, active && styles.durationTextSelected]}>{m}</Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      </View>
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Start</Text>
+        <Pressable style={styles.dropdown} onPress={() => setPickingStart(!pickingStart)} accessibilityLabel="Start time">
+          <Text style={styles.dropdownText}>{habit.start_time ? clock(habitStartHours(habit.start_time)) : 'Any time'}</Text>
+          <ChevronDown size={16} color={c.muted} />
+        </Pressable>
+      </View>
+      {pickingStart ? (
+        <ScrollView style={styles.dropdownList} nestedScrollEnabled>
+          {[null, ...startTimeOptions()].map((h) => {
+            const value = h === null ? null : habitStartValue(h)
+            const active = (habit.start_time ?? null) === value
+            return (
+              <Pressable
+                key={value ?? 'any'}
+                style={[styles.dropdownItem, active && styles.segmentItemActive]}
+                onPress={() => {
+                  setPickingStart(false)
+                  if (!active) onEdit(habit, { start_time: value })
+                }}
+              >
+                <Text style={[styles.dropdownText, active && styles.segmentTextActive]}>
+                  {h === null ? 'Any time (first free gap)' : clock(h)}
+                </Text>
+              </Pressable>
+            )
+          })}
+        </ScrollView>
       ) : null}
       {rows.length ? (
         <>
@@ -2083,6 +2152,20 @@ const styles = StyleSheet.create({
   weekdays: { flexDirection: 'row', gap: 4 },
   weekday: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: c.line },
   historyList: { flexGrow: 0 },
+  dropdown: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: c.line,
+    borderRadius: 6,
+  },
+  dropdownText: { fontSize: 16, color: c.ink },
+  dropdownList: { maxHeight: 200, borderWidth: 1, borderColor: c.line, borderRadius: 6 },
+  dropdownItem: { paddingVertical: 8, paddingHorizontal: 10 },
   detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },

@@ -601,3 +601,21 @@ export function swipeDays(dx: number, dy: number) {
   if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < 2 * Math.abs(dy)) return 0
   return dx < 0 ? 1 : -1
 }
+
+// Set start times a habit can pick: every half hour from 6am (the day's start)
+// to 1:30am, the last that still fits before the 2am end
+export function startTimeOptions() {
+  const out: number[] = []
+  for (let h = DAY_START; h <= DAY_END - 0.5 + EPS; h += 0.5) out.push(h)
+  return out
+}
+
+// A habit's set time as stored ("01:30:00" for 1:30am) and as hours into its
+// 6am to 6am day (25.5): a time before 6am is after midnight of that night
+export function habitStartValue(hours: number) {
+  return timeOf(hours >= 24 - EPS ? hours - 24 : hours)
+}
+export function habitStartHours(time: string) {
+  const h = hoursOf(time)
+  return h < DAY_START - EPS ? h + 24 : h
+}

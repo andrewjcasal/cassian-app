@@ -26,6 +26,9 @@ import {
   resumeTimer,
   habitHistory,
   routineFrom,
+  habitStartHours,
+  habitStartValue,
+  startTimeOptions,
   swipeDays,
   switchRoutine,
   insertAtPlan,
@@ -397,6 +400,22 @@ test('Moving an event from its card moves it and pushes the todos it now overlap
   const plan = moveStartPlan(items, event, at(16, 30))
   if (!('moves' in plan)) throw new Error(plan.error)
   assert.deepEqual(fmt(plan.moves), ['dentist@16:30-17:30', 'washer@17:30-18:30'])
+})
+
+test('startTimeOptions runs every half hour from 6am to 1:30am', () => {
+  const options = startTimeOptions()
+  assert.equal(options[0], 6)
+  assert.equal(options[options.length - 1], at(25, 30))
+  assert.equal(options.length, 40)
+  assert.ok(options.includes(23))
+})
+
+test('A habit set time after midnight is stored as a real time and read back as that night', () => {
+  assert.equal(habitStartValue(23), '23:00:00')
+  assert.equal(habitStartValue(at(25, 30)), '01:30:00')
+  assert.equal(habitStartHours('23:00:00'), 23)
+  assert.equal(habitStartHours('01:30:00'), at(25, 30))
+  assert.equal(habitStartHours('06:00:00'), 6)
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
