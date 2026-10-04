@@ -8,6 +8,7 @@ import {
   clock,
   dateAt,
   donePlan,
+  doneNowPlan,
   doneAtEnd,
   durationOptions,
   fromStored,
@@ -557,6 +558,42 @@ test('Done before a block starts frees its slot, so later todos and habits move 
   // A later day counts as not started yet too
   const tomorrow = donePlan(items, washer, '2026-10-02', DAY, at(19, 27))
   assert.deepEqual(fmt(tomorrow.moves), ['skool@19:45-20:00'])
+})
+
+test('Done now on a todo under way keeps its start and ends it now, moving later todos up', () => {
+  const current = block('current', 15, 16)
+  const plan = doneNowPlan([current, block('washer', 16, 17)], current, DAY, DAY, at(15, 20))
+  assert.equal(plan.start, 15)
+  assert.equal(plan.end, at(15, 20))
+  assert.deepEqual(fmt(plan.moves), ['washer@15:20-16:20'])
+})
+
+test('Done now on a todo not started yet moves it to end now and pulls later todos into its slot', () => {
+  const washer = block('washer', 20, 21)
+  const items = [washer, block('skool', 21, at(21, 15), { source: 'habit', habitId: 'h1' })]
+  const plan = doneNowPlan(items, washer, DAY, DAY, at(19, 27))
+  assert.equal(plan.start, at(18, 27))
+  assert.equal(plan.end, at(19, 27))
+  assert.deepEqual(fmt(plan.moves), ['skool@20:00-20:15'])
+})
+
+test('Done now on a todo whose time has passed moves it to end now and leaves the rest alone', () => {
+  const oven = block('oven', 15, at(15, 30))
+  const plan = doneNowPlan([oven, block('washer', at(15, 30), 17)], oven, DAY, DAY, at(19, 27))
+  assert.equal(plan.start, at(18, 57))
+  assert.equal(plan.end, at(19, 27))
+  assert.deepEqual(plan.moves, [])
+})
+
+test('Done now on a todo from another day lands it today ending now, never before 6am', () => {
+  const yesterday = block('x', 19, 20)
+  const plan = doneNowPlan([yesterday], yesterday, '2026-09-30', DAY, at(19, 27))
+  assert.equal(plan.start, at(18, 27))
+  assert.equal(plan.end, at(19, 27))
+  assert.deepEqual(plan.moves, [])
+  const early = doneNowPlan([yesterday], yesterday, '2026-09-30', DAY, at(6, 20))
+  assert.equal(early.start, 6)
+  assert.equal(early.end, at(6, 20))
 })
 
 test('A block done early does not count as taken when finding a gap', () => {

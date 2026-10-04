@@ -63,6 +63,7 @@ import {
   clock,
   doneAtEnd,
   donePlan,
+  doneNowPlan,
   durationOptions,
   newBlockStart,
   halfSides,
@@ -662,18 +663,45 @@ function DayPage() {
     if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
   }
 
-  // Done now from the card. On the day being shown it follows the same rules as
-  // Done in the block menu; on any other day it just marks it done.
+  // Done now from the card. A todo or habit ends now and lands on today
+  // (doneNowPlan); a calendar event, task or set-time habit follows the block
+  // menu's Done on the day shown, and on any other day is just marked done.
   const doneNow = async (d: Detail) => {
     setDetail(null)
     const item = d.day === day ? items.find((it) => it.id === d.id) : undefined
-    if (item) return setStatus(item, 'done')
-    const { error } = await supabase
+    const movable =
+      !d.event && !d.fixed && (d.from === 'todo' || (item?.kind === 'block' && (item.source === 'app' || item.source === 'habit')))
+    if (!movable) {
+      if (item) return setStatus(item, 'done')
+      const { error } = await supabase
+        .from('cass_time_blocks')
+        .update({ done: true, done_at: new Date().toISOString() })
+        .eq('id', d.id)
+      if (error) return setError(error.message)
+      return load()
+    }
+    const todayItems = byDay[today]?.items ?? []
+    const self: CalItem = todayItems.find((it) => it.id === d.id) ?? item ?? {
+      id: d.id,
+      title: d.title,
+      start: d.start,
+      end: d.end,
+      kind: 'block',
+      done: false,
+    }
+    const plan = doneNowPlan(d.day === today ? todayItems : [self], self, d.day, today, nowHours())
+    const doneAt = new Date().toISOString()
+    let { error } = await supabase
       .from('cass_time_blocks')
-      .update({ done: true, done_at: new Date().toISOString() })
+      .update({ ...toStored(today, plan.start, plan.end), done: true, done_at: doneAt })
       .eq('id', d.id)
+    // A habit whose copy for today already exists can't move onto today, so it's done where it is
+    if (error?.code === '23505') {
+      ;({ error } = await supabase.from('cass_time_blocks').update({ done: true, done_at: doneAt }).eq('id', d.id))
+    }
     if (error) return setError(error.message)
-    load()
+    if (plan.moves.length) await saveMoves(plan.moves, () => today)
+    await Promise.all([loadDay(d.day), loadDay(today)])
   }
 
   // Done at its scheduled end from the card: marked done as scheduled, nothing moves

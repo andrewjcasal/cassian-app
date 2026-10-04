@@ -326,6 +326,24 @@ export function donePlan(items: CalItem[], item: CalItem, day: string, today: st
   return { endAt: null as number | null, moves: [] as Move[] }
 }
 
+// Done now from the card: the todo or habit ends now. One under way keeps its
+// start; one not started yet, already past, or on another day moves so it ends
+// now at its own length (never before 6am), landing on today. A not started one
+// today frees its slot, so the later todos and habits move up into it.
+export function doneNowPlan(items: CalItem[], item: CalItem, day: string, today: string, now: number) {
+  const at = minuteOf(now)
+  const length = item.end - item.start
+  const endingNow = { start: Math.max(DAY_START, at - length), end: at }
+  if (day !== today) return { ...endingNow, moves: [] as Move[] }
+  if (item.start <= at && at < item.end) {
+    return { start: item.start, end: at, moves: carried(items, item, item.end).map((it) => shift(it, at - item.end)) }
+  }
+  if (at < item.start) {
+    return { ...endingNow, moves: carried(items, item, item.end).map((it) => shift(it, -length)) }
+  }
+  return { ...endingNow, moves: [] as Move[] }
+}
+
 // Not started, today: the block starts now, and every todo and habit that isn't
 // done and hasn't finished (including one under way) re-packs back to back after
 // it in its current order, each keeping its length. On an earlier day there's no
