@@ -24,6 +24,7 @@ import {
   advanceTimer,
   extendStep,
   resumeTimer,
+  groupByDay,
   habitHistory,
   routineFrom,
   habitStartHours,
@@ -416,6 +417,19 @@ test('A habit set time after midnight is stored as a real time and read back as 
   assert.equal(habitStartHours('23:00:00'), 23)
   assert.equal(habitStartHours('01:30:00'), at(25, 30))
   assert.equal(habitStartHours('06:00:00'), 6)
+})
+
+test('groupByDay groups events by day, newest day first and latest first within a day', () => {
+  const rows = [
+    { title: 'Theo: Open window', day: '2026-10-02', start: at(23, 30), end: at(23, 35) },
+    { title: 'Cat Fight: Play', day: '2026-10-03', start: at(7, 37), end: at(7, 52) },
+    { title: 'Theo: Open window', day: '2026-10-03', start: at(7, 26), end: at(7, 41) },
+    { title: 'Cat Fight: Play', day: '2026-10-02', start: at(24, 10), end: at(24, 15) },
+  ]
+  const grouped = groupByDay(rows)
+  assert.deepEqual(grouped.map((g) => g.day), ['2026-10-03', '2026-10-02'])
+  assert.deepEqual(grouped[0].rows.map((r) => r.title), ['Cat Fight: Play', 'Theo: Open window'])
+  assert.deepEqual(grouped[1].rows.map((r) => r.start), [at(24, 10), at(23, 30)])
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {

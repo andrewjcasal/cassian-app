@@ -20,7 +20,16 @@ export type CalItem = {
   processId?: string | null
 }
 
-export type Todo = { id: string; title: string; day: string; start: number; end: number; habit: boolean; fixed?: boolean }
+export type Todo = {
+  id: string
+  title: string
+  day: string
+  start: number
+  end: number
+  habit: boolean
+  fixed?: boolean
+  habitId?: string | null
+}
 
 export type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
 
@@ -618,4 +627,13 @@ export function habitStartValue(hours: number) {
 export function habitStartHours(time: string) {
   const h = hoursOf(time)
   return h < DAY_START - EPS ? h + 24 : h
+}
+
+// Rows grouped by their 6am to 6am day, newest day first, latest first within a day
+export function groupByDay<R extends { day: string; start: number }>(rows: R[]) {
+  const days = new Map<string, R[]>()
+  for (const r of rows) days.set(r.day, [...(days.get(r.day) ?? []), r])
+  return [...days.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : -1))
+    .map(([day, list]) => ({ day, rows: [...list].sort((x, y) => y.start - x.start) }))
 }

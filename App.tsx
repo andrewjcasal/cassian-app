@@ -64,6 +64,7 @@ import {
   notStartedPlan,
   advanceTimer,
   extendStep,
+  groupByDay,
   habitHistory,
   resumeTimer,
   routineFrom,
@@ -218,6 +219,8 @@ type Detail = {
   fixed: boolean
   // An event: no done buttons
   event: boolean
+  // The habit a habit block belongs to, for its Context
+  habitId: string | null
 }
 
 function DayPage() {
@@ -421,7 +424,16 @@ function DayPage() {
       if (loadRuns.current.get(d) !== run) return
       const dayTodos = (todoRes.data ?? []).map((t) => {
         const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
-        return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, fixed: hasSetTime(t.cass_habits) }
+        return {
+          id: t.id,
+          title: t.title,
+          day: logicalDay,
+          start,
+          end,
+          habit: !!t.habit_id,
+          fixed: hasSetTime(t.cass_habits),
+          habitId: t.habit_id,
+        }
       })
       setByDay((prev) => ({ ...prev, [d]: { items: current, todos: dayTodos } }))
     },
@@ -750,7 +762,7 @@ function DayPage() {
 
             {tab === 'todos' ? (
               <View style={styles.card}>
-                <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false })} />
+                <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null })} />
                 <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
                   <TextInput
                     style={styles.addInput}
@@ -771,7 +783,7 @@ function DayPage() {
                 items={items}
                 showNow={day === today}
                 onMore={(item, x, y) => setMenu({ item, x, y })}
-                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed, event: item.source === 'event' })}
+                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed, event: item.source === 'event', habitId: item.habitId ?? null })}
                 onAddAt={setAddAt}
               />
             )}
@@ -832,6 +844,7 @@ function DayPage() {
               onDoneAtEnd={doneAtScheduledEnd}
               onStartRoutine={startRoutine}
               parts={detailParts}
+              help={help}
             />
           ) : null}
         </Pressable>
@@ -1729,6 +1742,7 @@ function DetailCard({
   onDoneAtEnd,
   onStartRoutine,
   parts,
+  help,
 }: {
   detail: Detail
   today: string
@@ -1739,7 +1753,26 @@ function DetailCard({
   onStartRoutine: (detail: Detail, step: string) => void
   // Recorded routine steps under this block
   parts: { id: string; title: string; start: number; end: number }[]
+  help: HelpGroup[]
 }) {
+  // Context: the Help events tied to this habit, day by day
+  const [showContext, setShowContext] = useState(false)
+  const [context, setContext] = useState<ReturnType<typeof groupByDay<{ title: string; day: string; start: number; end: number }>> | null>(null)
+  const contextTitles = detail.habitId
+    ? help.flatMap((g) => g.options.filter((o) => g.habits[o] === detail.habitId).map((o) => `${g.name}: ${o}`))
+    : []
+  useEffect(() => {
+    if (!showContext || !contextTitles.length) return
+    supabase
+      .from('cass_time_blocks')
+      .select('title,day,start_time,end_time')
+      .eq('source', 'event')
+      .in('title', contextTitles)
+      .then(({ data }) => {
+        setContext(groupByDay((data ?? []).map((b) => ({ title: b.title, ...fromStored(b.day, b.start_time, b.end_time) }))))
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showContext, contextTitles.join('|')])
   const routineSteps = (ROUTINES[detail.title] ?? []).filter((step) => step.minutes !== null)
   const saved = Math.round((detail.end - detail.start) * 60)
   const savedStart = Math.round(detail.start * 60)
@@ -1755,7 +1788,39 @@ function DetailCard({
   return (
     // Claims taps on the card so only the backdrop closes it
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
-      <Text style={styles.detailTitle}>{detail.title}</Text>
+      <View style={styles.modeRow}>
+        <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
+        {detail.habitId ? (
+          <Pressable onPress={() => setShowContext(!showContext)} hitSlop={8} accessibilityState={{ expanded: showContext }}>
+            <Text style={styles.modeSwitch}>Context</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {showContext ? (
+        <View style={styles.parts}>
+          {!contextTitles.length ? (
+            <Text style={styles.minutesLabel}>No Help events are tied to this habit yet. Link one on Planning.</Text>
+          ) : context && context.length ? (
+            <ScrollView style={styles.dropdownList} nestedScrollEnabled>
+              {context.map((g) => (
+                <View key={g.day} style={styles.contextDay}>
+                  <Text style={styles.sectionLabel}>{dayLabel(g.day).toUpperCase()}</Text>
+                  {g.rows.map((r, i) => (
+                    <View key={`${r.title}-${r.start}-${i}`} style={styles.partRow}>
+                      <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
+                      <Text style={styles.minutesLabel}>
+                        {clock(r.start)} · {Math.round((r.end - r.start) * 60)} min
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+          ) : context ? (
+            <Text style={styles.minutesLabel}>None tracked yet.</Text>
+          ) : null}
+        </View>
+      ) : null}
       {detail.day === today ? null : <Text style={styles.detailDay}>{dayLabel(detail.day)}</Text>}
       <Text style={styles.detailTimes}>
         {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
@@ -2437,6 +2502,7 @@ const styles = StyleSheet.create({
   weekday: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: c.line },
   historyList: { flexGrow: 0 },
   subRow: { paddingLeft: 24 },
+  contextDay: { paddingHorizontal: 8, paddingTop: 6 },
   titleWithAdd: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   dropdown: {
     flex: 1,
