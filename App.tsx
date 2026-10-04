@@ -142,6 +142,12 @@ function dayLabel(day: string) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
 }
 
+// The embedded cass_habits row's frequency, whichever shape the client returns
+function habitFrequency(habit: unknown) {
+  const row = (Array.isArray(habit) ? habit[0] : habit) as { frequency?: string } | null | undefined
+  return row?.frequency ?? null
+}
+
 // Whether a block's linked habit (the embedded cass_habits row) has a set time.
 // Without generated types the client calls it a list; for one habit per block the
 // API sends one object, so this accepts either.
@@ -458,19 +464,22 @@ function DayPage() {
         d === today
           ? await supabase
               .from('cass_time_blocks')
-              .select('id,title,day,start_time,end_time,habit_id')
-              .eq('source', 'app')
+              .select('id,title,day,start_time,end_time,habit_id,source,cass_habits(frequency)')
+              .in('source', ['app', 'habit'])
               .eq('done', false)
               .lt('logical_day', d)
               .order('day')
               .order('start_time')
-          : { data: [] as { id: string; title: string; day: string; start_time: string; end_time: string | null; habit_id: string | null }[], error: null }
+          : { data: [] as { id: string; title: string; day: string; start_time: string; end_time: string | null; habit_id: string | null; source: string; cass_habits: unknown }[], error: null }
       if (overdueRes.error) setError(overdueRes.error.message)
       if (loadRuns.current.get(d) !== run) return
-      const dayOverdue = (overdueRes.data ?? []).map((t) => {
-        const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
-        return { id: t.id, title: t.title, day: logicalDay, start, end, habit: false, habitId: null }
-      })
+      // Todos, and weekly habits (a missed daily habit just comes back tomorrow)
+      const dayOverdue = (overdueRes.data ?? [])
+        .filter((t) => t.source === 'app' || habitFrequency(t.cass_habits) === 'weekly')
+        .map((t) => {
+          const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
+          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, habitId: t.habit_id }
+        })
       const dayTodos = (todoRes.data ?? []).map((t) => {
         const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
         return {
@@ -852,11 +861,14 @@ function DayPage() {
                       key={t.id}
                       style={styles.todoRow}
                       onPress={() =>
-                        setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: false, event: false, habitId: null })
+                        setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: false, event: false, habitId: t.habitId ?? null })
                       }
                     >
                       <Text style={[styles.todoText, { flex: 1 }]}>{t.title}</Text>
-                      <Text style={styles.minutesLabel}>{dayLabel(t.day)}</Text>
+                      <Text style={styles.minutesLabel}>
+                    {t.habit ? 'Habit · ' : ''}
+                    {dayLabel(t.day)}
+                  </Text>
                     </Pressable>
                   ))}
                 </View>
