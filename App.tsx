@@ -1811,8 +1811,9 @@ function DetailCard({
     : []
   // The habit's own blocks, for when it was done the night before each day
   const [habitNights, setHabitNights] = useState<{ logical_day: string; done: boolean; done_at: string | null }[]>([])
+  // Loaded when the card opens, so Context is ready the moment it's tapped
   useEffect(() => {
-    if (!showContext || !contextTitles.length) return
+    if (!contextTitles.length) return
     supabase
       .from('cass_time_blocks')
       .select('title,day,start_time,end_time')
@@ -1827,7 +1828,7 @@ function DetailCard({
       .eq('habit_id', detail.habitId!)
       .then(({ data }) => setHabitNights(data ?? []))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showContext, contextTitles.join('|')])
+  }, [detail.habitId, contextTitles.join('|')])
   const routineSteps = (ROUTINES[detail.title] ?? []).filter((step) => step.minutes !== null)
   const saved = Math.round((detail.end - detail.start) * 60)
   const savedStart = Math.round(detail.start * 60)
