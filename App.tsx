@@ -2446,7 +2446,7 @@ function TodoList({
 }: {
   todos: Todo[]
   today: string
-  onMinutes: (todo: Todo, minutes: number) => void
+  onMinutes: (todo: Todo, minutes: number) => Promise<void> | void
   onReorder: (next: Todo[]) => void
   onDragging: (dragging: boolean) => void
   onOpen: (todo: Todo) => void
@@ -2566,12 +2566,23 @@ function TodoRow({
 }: {
   todo: Todo
   today: string
-  onMinutes: (minutes: number) => void
+  onMinutes: (minutes: number) => Promise<void> | void
   onOpen: () => void
   handle: PanResponderInstance['panHandlers']
 }) {
   const minutes = Math.round((todo.end - todo.start) * 60)
   const options = durationOptions(minutes)
+  // While a new duration saves, a spinner takes the chips' place at the same width
+  const [saving, setSaving] = useState(false)
+  const [chipsWidth, setChipsWidth] = useState<number | undefined>(undefined)
+  const pick = async (m: number) => {
+    setSaving(true)
+    try {
+      await onMinutes(m)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <View style={styles.todoRow}>
@@ -2591,14 +2602,19 @@ function TodoRow({
           {clock(todo.start)}
         </Text>
       </Pressable>
-      <View style={styles.durations}>
+      {saving ? (
+        <View style={[styles.durations, styles.durationsSaving, { width: chipsWidth }]}>
+          <ActivityIndicator size="small" color={c.accent} />
+        </View>
+      ) : (
+      <View style={styles.durations} onLayout={(e) => setChipsWidth(e.nativeEvent.layout.width)}>
         {options.map((m) => {
           const selected = m === minutes
           return (
             <Pressable
               key={m}
               style={[styles.duration, selected && styles.durationSelected]}
-              onPress={() => !selected && onMinutes(m)}
+              onPress={() => !selected && pick(m)}
               accessibilityLabel={`${m} minutes`}
               accessibilityState={{ selected }}
             >
@@ -2607,6 +2623,7 @@ function TodoRow({
           )
         })}
       </View>
+      )}
     </View>
   )
 }
@@ -2818,6 +2835,7 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  durationsSaving: { justifyContent: 'center', alignItems: 'center', minHeight: 30 },
   backButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   backText: { fontSize: 16, fontWeight: '600', color: c.accent },
   viewAllRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8 },
