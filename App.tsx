@@ -848,6 +848,8 @@ function DayPage() {
             scrollEnabled={!dragging}
             contentContainerStyle={styles.page}
             keyboardShouldPersistTaps="handled"
+            // Keeps "Add a todo" above the keyboard on a long list
+            automaticallyAdjustKeyboardInsets
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pullToRefresh} />}
           >
             {error ? <Text style={styles.error}>{error}</Text> : null}
