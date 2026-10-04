@@ -319,8 +319,6 @@ function DayPage() {
   const [addAt, setAddAt] = useState<number | null>(null)
   // The routine timer that's running, if any (full page)
   const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
-  // A routine block's recorded steps, shown on its card under the done buttons
-  const [detailParts, setDetailParts] = useState<{ id: string; title: string; start: number; end: number }[]>([])
   const [dragging, setDragging] = useState(false)
   // Where the settings icon was tapped, so its menu opens beside it
   const [settingsMenu, setSettingsMenu] = useState<{ x: number; y: number } | null>(null)
@@ -637,27 +635,6 @@ function DayPage() {
     if (error) setError(error.message)
   }
 
-  // Loads a block's recorded routine steps when its card opens
-  useEffect(() => {
-    setDetailParts([])
-    if (!detail) return
-    supabase
-      .from('cass_time_blocks')
-      .select('id,title,day,start_time,end_time')
-      .eq('process_id', detail.id)
-      .order('day')
-      .order('start_time')
-      .then(({ data, error }) => {
-        if (error) return setError(error.message)
-        setDetailParts(
-          (data ?? []).map((b) => {
-            const { start, end } = fromStored(b.day, b.start_time, b.end_time)
-            return { id: b.id, title: b.title, start, end }
-          }),
-        )
-      })
-  }, [detail?.id])
-
   // A todo or event added at a tapped time; the todos and habits from there on move
   // along behind it (insertAtPlan). Mark as Done adds it already done, stamped at
   // its end. An event is saved as source 'event', which no rule ever moves.
@@ -845,7 +822,11 @@ function DayPage() {
               onDoneNow={doneNow}
               onDoneAtEnd={doneAtScheduledEnd}
               onStartRoutine={startRoutine}
-              parts={detailParts}
+              // Its recorded routine steps, already loaded with the day's blocks
+              parts={(byDay[detail.day]?.items ?? [])
+                .filter((it) => it.processId === detail.id)
+                .sort((x, y) => x.start - y.start)
+                .map((it) => ({ id: it.id, title: it.title, start: it.start, end: it.end }))}
               help={help}
             />
           ) : null}
