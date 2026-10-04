@@ -94,6 +94,7 @@ import {
   insertAtPlan,
   interruptPlan,
   habitsForDay,
+  weekStart,
   habitSearchFrom,
   placeHabits,
   quarterOf,
@@ -402,7 +403,17 @@ function DayPage() {
       if (error) return setError(error.message), false
       const from = habitSearchFrom(day, today, nowHours())
       if (from === null) return false
-      const forDay = habitsForDay(habits ?? [], day).map((h) => ({ ...h, start: h.start_time ? habitStartHours(h.start_time) : null }))
+      // A weekly habit already placed elsewhere this week (Sunday to Saturday) isn't placed again
+      const week = weekStart(day)
+      const { data: weekBlocks } = await supabase
+        .from('cass_time_blocks')
+        .select('habit_id,logical_day,habit_week')
+        .eq('habit_week', week)
+      const forDay = habitsForDay(
+        habits ?? [],
+        day,
+        (weekBlocks ?? []) as { habit_id: string; logical_day: string; habit_week: string | null }[],
+      ).map((h) => ({ ...h, start: h.start_time ? habitStartHours(h.start_time) : null }))
       const placements = placeHabits(current, forDay, from)
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
@@ -412,6 +423,8 @@ function DayPage() {
             kind: 'personal',
             source: 'habit',
             habit_id: p.habitId,
+            // The week it's placed for; moving it to another day keeps this
+            habit_week: week,
           },
           { onConflict: 'habit_id,logical_day', ignoreDuplicates: true },
         )
@@ -1013,7 +1026,7 @@ type Habit = {
 }
 
 // One of a habit's blocks, with its 6am to 6am day and times
-type HabitBlock = { logical_day: string; done: boolean; start: number; end: number }
+type HabitBlock = { logical_day: string; done: boolean; start: number; end: number; habit_week: string | null }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const WEEKDAY_NAMES = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays']
@@ -1181,7 +1194,7 @@ function HabitsScreen({
     if (!active && habits.length) return
     Promise.all([
       supabase.from('cass_habits').select('id,title,minutes,frequency,weekday,start_time').order('sort_order'),
-      supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done').not('habit_id', 'is', null),
+      supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done,habit_week').not('habit_id', 'is', null),
       // Skipped until the Help list has loaded (an empty list isn't a valid filter)
       help.length
         ? supabase
@@ -1203,7 +1216,7 @@ function HabitsScreen({
       setHabits(habitRes.data ?? [])
       const byHabit = new Map<string, HabitBlock[]>()
       for (const b of blockRes.data ?? []) {
-        const row = { logical_day: b.logical_day, done: b.done, ...fromStored(b.day, b.start_time, b.end_time) }
+        const row = { logical_day: b.logical_day, done: b.done, habit_week: b.habit_week, ...fromStored(b.day, b.start_time, b.end_time) }
         byHabit.set(b.habit_id, [...(byHabit.get(b.habit_id) ?? []), row])
       }
       setBlocksByHabit(byHabit)
@@ -1790,7 +1803,9 @@ function HabitHistory({
                 ) : (
                   <X size={18} color={c.muted} />
                 )}
-                <Text style={[styles.todoText, { flex: 1 }]}>{r.day === today ? 'Today' : dayLabel(r.day)}</Text>
+                <Text style={[styles.todoText, { flex: 1 }]}>
+                  {habit.frequency === 'weekly' ? `Week of ${dayLabel(r.day)}` : r.day === today ? 'Today' : dayLabel(r.day)}
+                </Text>
                 <Text style={styles.minutesLabel}>
                   {r.status === 'done'
                     ? `${clock(r.start)} · ${r.minutes} min`

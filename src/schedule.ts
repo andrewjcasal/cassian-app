@@ -202,10 +202,26 @@ export function weekdayOf(day: string) {
   return new Date(y, m - 1, d).getDay()
 }
 
-// The habits that land on a day: daily ones every day, weekly ones only on
-// their weekday (and not at all until a weekday is picked).
-export function habitsForDay<H extends { frequency: 'daily' | 'weekly'; weekday: number | null }>(habits: H[], day: string) {
-  return habits.filter((h) => h.frequency === 'daily' || (h.weekday !== null && h.weekday === weekdayOf(day)))
+// The Sunday that starts a day's week
+export function weekStart(day: string) {
+  return shiftDay(day, -weekdayOf(day))
+}
+
+// The habits that land on a day: daily ones every day; weekly ones only on their
+// weekday (not at all until one is picked), and not if that week already has one
+// on another day (moved there with the Date row).
+export function habitsForDay<H extends { id: string; frequency: 'daily' | 'weekly'; weekday: number | null }>(
+  habits: H[],
+  day: string,
+  // habit_week: the week a block was placed for, kept when it's moved to another day
+  weekBlocks: { habit_id: string; logical_day: string; habit_week?: string | null }[] = [],
+) {
+  const week = weekStart(day)
+  return habits.filter((h) => {
+    if (h.frequency === 'daily') return true
+    if (h.weekday === null || h.weekday !== weekdayOf(day)) return false
+    return !weekBlocks.some((b) => b.habit_id === h.id && (b.habit_week ?? weekStart(b.logical_day)) === week)
+  })
 }
 
 // A habit's history, one row per day from its first block through today, newest
@@ -217,7 +233,7 @@ export type HabitDay =
   | { day: string; status: 'missed' | 'pending' }
 
 export function habitHistory(
-  rows: { logical_day: string; done: boolean; start: number; end: number }[],
+  rows: { logical_day: string; done: boolean; start: number; end: number; habit_week?: string | null }[],
   today: string,
   // A weekly habit's weekday (0 = Sunday): only those days are listed
   weekday: number | null = null,
@@ -232,8 +248,20 @@ export function habitHistory(
   const days = [...byDay.keys()].sort()
   if (!days.length) return []
   const out: HabitDay[] = []
+  // A weekly habit: one row per week (labeled by its Sunday), done if any day was
+  // grouped by the week each block was placed for (habit_week), kept when moved
+  if (weekday !== null) {
+    const weekOf = (r: (typeof rows)[number]) => r.habit_week ?? weekStart(r.logical_day)
+    const past = rows.filter((r) => r.logical_day <= today)
+    const first = past.map(weekOf).sort()[0]
+    for (let w = weekStart(today); w >= first; w = shiftDay(w, -7)) {
+      const t = past.find((r) => r.done && weekOf(r) === w)
+      if (t) out.push({ day: w, status: 'done', start: t.start, minutes: Math.round((t.end - t.start) * 60) })
+      else out.push({ day: w, status: w === weekStart(today) ? 'pending' : 'missed' })
+    }
+    return out
+  }
   for (let d = today; d >= days[0]; d = shiftDay(d, -1)) {
-    if (weekday !== null && weekdayOf(d) !== weekday) continue
     const done = byDay.get(d)
     if (done) out.push({ day: d, status: 'done', start: done.start, minutes: Math.round((done.end - done.start) * 60) })
     else out.push({ day: d, status: d === today ? 'pending' : 'missed' })

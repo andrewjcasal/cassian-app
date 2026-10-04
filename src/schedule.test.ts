@@ -37,6 +37,7 @@ import {
   insertAtPlan,
   interruptPlan,
   habitsForDay,
+  weekStart,
   habitSearchFrom,
   placeHabits,
   quarterOf,
@@ -156,15 +157,49 @@ test('habitsForDay: daily habits every day, weekly habits only on their weekday'
   assert.deepEqual(habitsForDay(habits, '2026-10-02').map((h) => h.id), ['skool'])
 })
 
-test('habitHistory for a weekly habit counts only its weekday', () => {
-  const rows = [
-    { logical_day: '2026-09-19', done: true, start: 10, end: 11 },
-    { logical_day: '2026-10-03', done: false, start: 15, end: 16 },
+test('weekStart is the Sunday that starts the week', () => {
+  assert.equal(weekStart('2026-10-03'), '2026-09-27') // Saturday
+  assert.equal(weekStart('2026-10-04'), '2026-10-04') // Sunday
+  assert.equal(weekStart('2026-10-05'), '2026-10-04') // Monday
+})
+
+test('habitsForDay skips a weekly habit already placed elsewhere that week', () => {
+  const habits = [
+    { id: 'skool', frequency: 'daily' as const, weekday: null },
+    { id: 'plan', frequency: 'weekly' as const, weekday: 6 }, // Saturdays
   ]
-  // Saturdays only: 9/19 done, 9/26 never placed (missed), 10/3 today pending
+  // Moved to Friday 10/2 this week, so Saturday 10/3 doesn't place it again
+  assert.deepEqual(habitsForDay(habits, '2026-10-03', [{ habit_id: 'plan', logical_day: '2026-10-02' }]).map((h) => h.id), ['skool'])
+  // A block last week doesn't count
+  assert.deepEqual(habitsForDay(habits, '2026-10-03', [{ habit_id: 'plan', logical_day: '2026-09-26' }]).map((h) => h.id), ['skool', 'plan'])
+})
+
+test('A weekly habit moved to another week keeps counting for the week it was placed for', () => {
+  const habits = [{ id: 'plan', frequency: 'weekly' as const, weekday: 6 }]
+  // Last week's (week of 9/20) done late on Sunday 9/27: this Saturday still gets one
+  assert.deepEqual(
+    habitsForDay(habits, '2026-10-03', [{ habit_id: 'plan', logical_day: '2026-09-27', habit_week: '2026-09-20' }]).map((h) => h.id),
+    ['plan'],
+  )
+  // History: the late Sunday shows as last week done, this week still pending
+  const rows = [
+    { logical_day: '2026-09-27', done: true, start: 10, end: 11, habit_week: '2026-09-20' },
+    { logical_day: '2026-10-03', done: false, start: 15, end: 16, habit_week: '2026-09-27' },
+  ]
   assert.deepEqual(
     habitHistory(rows, '2026-10-03', 6).map((r) => `${r.day} ${r.status}`),
-    ['2026-10-03 pending', '2026-09-26 missed', '2026-09-19 done'],
+    ['2026-09-27 pending', '2026-09-20 done'],
+  )
+})
+
+test('habitHistory for a weekly habit has one row per week, done if any day was', () => {
+  const rows = [
+    { logical_day: '2026-09-18', done: true, start: 10, end: 11 }, // Fri, week of 9/13 (moved)
+    { logical_day: '2026-10-03', done: false, start: 15, end: 16 }, // this week
+  ]
+  assert.deepEqual(
+    habitHistory(rows, '2026-10-03', 6).map((r) => `${r.day} ${r.status}`),
+    ['2026-09-27 pending', '2026-09-20 missed', '2026-09-13 done'],
   )
 })
 
