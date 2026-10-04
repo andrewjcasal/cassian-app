@@ -2,6 +2,7 @@ import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState 
 import {
   ActivityIndicator,
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -112,6 +113,8 @@ const FIRST_HOUR = 6
 const EVENT_LEFT = 52
 // Cards stop this far from the right; tapping that strip adds a todo at that time
 const EVENT_RIGHT = 30
+// The Todos tab lists this many before "View all"
+const TODO_PREVIEW = 5
 // A short block is at least this tall so its title stays readable
 const SHORT_MIN_PX = 20
 // Today opens scrolled to this many hours before now (the grid still runs 6am to 2am)
@@ -268,6 +271,10 @@ function DayPage() {
   // Days already fetched at least once, so neighbors are prefetched only once
   const fetchedDays = useRef(new Set<string>())
   const [draft, setDraft] = useState('')
+  // The Todos tab shows the first TODO_PREVIEW; "View all" opens the day's full list
+  const [allTodos, setAllTodos] = useState(false)
+  useEffect(() => setAllTodos(false), [tab, day])
+  const shownTodos = allTodos ? todos : todos.slice(0, TODO_PREVIEW)
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   // Swiping sideways on the agenda moves a day (swipeDays: left is the next day).
@@ -821,6 +828,22 @@ function DayPage() {
       ) : (
       <View style={styles.screenFill} {...(tab === 'agenda' ? daySwipe.panHandlers : {})}>
         {/* Stays put while the agenda or todos scroll underneath */}
+        {tab === 'todos' && allTodos ? (
+          <View style={[styles.header, styles.fixedHeader]}>
+            <Pressable
+              onPress={() => {
+                Keyboard.dismiss()
+                setAllTodos(false)
+              }}
+              hitSlop={10}
+              accessibilityLabel="Back"
+            >
+              <ChevronLeft size={22} color={c.ink} />
+            </Pressable>
+            <Text style={styles.title}>{day === today ? "Today's todos" : dayLabel(day)}</Text>
+            <View style={{ width: 22 }} />
+          </View>
+        ) : (
         <View style={[styles.header, styles.fixedHeader]}>
           <Pressable onPress={() => setDay(shiftDay(day, -1))} hitSlop={10}>
             <ChevronLeft size={22} color={c.ink} />
@@ -836,6 +859,7 @@ function DayPage() {
             <SettingsButton onOpen={setSettingsMenu} />
           </View>
         </View>
+        )}
         <Animated.View style={[styles.screenFill, { transform: [{ translateX: tab === 'agenda' ? daySlide : 0 }] }]}>
           <ScrollView
             ref={agendaScroll}
@@ -854,7 +878,7 @@ function DayPage() {
           >
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
-            {tab === 'todos' && overdue.length ? (
+            {tab === 'todos' && !allTodos && overdue.length ? (
               <>
                 <Text style={[styles.sectionLabel, styles.overdueLabel]}>OVERDUE</Text>
                 <View style={[styles.card, styles.overdueCard]}>
@@ -879,7 +903,23 @@ function DayPage() {
             ) : null}
             {tab === 'todos' ? (
               <View style={styles.card}>
-                <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null })} />
+                <TodoList
+                  todos={shownTodos}
+                  today={today}
+                  onMinutes={setMinutes}
+                  // A reorder in the preview keeps the rest of the day after it
+                  onReorder={(next) => reorder([...next, ...todos.slice(next.length)])}
+                  onDragging={setDragging}
+                  onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null })}
+                />
+                {!allTodos && todos.length > TODO_PREVIEW ? (
+                  <Pressable style={[styles.viewAllRow, styles.addRowDivider]} onPress={() => setAllTodos(true)} hitSlop={4}>
+                    <Text style={[styles.viewAll, { flex: 1, paddingTop: 0 }]}>
+                      View all {day === today ? 'for today' : `for ${dayLabel(day)}`} ({todos.length})
+                    </Text>
+                    <ChevronRight size={16} color={c.accent} />
+                  </Pressable>
+                ) : null}
                 <View style={[styles.addRow, todos.length > 0 && styles.addRowDivider]}>
                   <TextInput
                     style={styles.addInput}
@@ -887,6 +927,11 @@ function DayPage() {
                     onChangeText={setDraft}
                     placeholder="Add a todo"
                     placeholderTextColor={c.muted}
+                    // Adding opens the full list, scrolled down to this field once the keyboard is up
+                    onFocus={() => {
+                      setAllTodos(true)
+                      setTimeout(() => agendaScroll.current?.scrollToEnd({ animated: true }), 300)
+                    }}
                     returnKeyType="done"
                     onSubmitEditing={add}
                   />
@@ -2756,6 +2801,7 @@ const styles = StyleSheet.create({
   overdueCard: { borderColor: c.now, marginBottom: 6 },
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
+  viewAllRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8 },
   viewAll: { fontSize: 14, fontWeight: '600', color: c.accent, paddingHorizontal: 8, paddingTop: 8 },
   nightBefore: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
   nightBeforeText: { fontSize: 12, fontWeight: '700', color: c.muted },
