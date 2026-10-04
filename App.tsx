@@ -837,11 +837,17 @@ function DayPage() {
               }}
               hitSlop={10}
               accessibilityLabel="Back"
+              style={[styles.backButton, { width: 64 }]}
             >
-              <ChevronLeft size={22} color={c.ink} />
+              <ChevronLeft size={18} color={c.accent} />
+              <Text style={styles.backText}>Back</Text>
             </Pressable>
-            <Text style={styles.title}>{day === today ? "Today's todos" : dayLabel(day)}</Text>
-            <View style={{ width: 22 }} />
+            {/* Its own title, so it reads as a separate page from the day view */}
+            <View>
+              <Text style={styles.title}>All todos</Text>
+              <Text style={styles.subtitle}>{day === today ? 'Today' : dayLabel(day)}</Text>
+            </View>
+            <View style={{ width: 64 }} />
           </View>
         ) : (
         <View style={[styles.header, styles.fixedHeader]}>
@@ -2803,6 +2809,8 @@ const styles = StyleSheet.create({
   overdueCard: { borderColor: c.now, marginBottom: 6 },
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
+  backButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  backText: { fontSize: 16, fontWeight: '600', color: c.accent },
   viewAllRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8 },
   viewAll: { fontSize: 14, fontWeight: '600', color: c.accent, paddingHorizontal: 8, paddingTop: 8 },
   nightBefore: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
