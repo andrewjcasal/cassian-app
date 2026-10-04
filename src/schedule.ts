@@ -652,3 +652,8 @@ export function nightBefore(
   const at = logicalNow(new Date(block.done_at))
   return at.day === night ? at.hours : at.hours + 24
 }
+
+// The Date row's quick picks on a todo card, counted from today
+export function dayChoice(choice: 'today' | '1d' | '3d', today: string) {
+  return choice === 'today' ? today : shiftDay(today, choice === '1d' ? 1 : 3)
+}

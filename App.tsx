@@ -40,6 +40,7 @@ import {
   Settings,
   X,
 } from 'lucide-react-native'
+import DateTimePicker from '@react-native-community/datetimepicker'
 import Slider from '@react-native-community/slider'
 import { supabase } from './src/supabase'
 import type { CassianDayProps } from './widgets/CassianDay'
@@ -77,6 +78,8 @@ import {
   notStartedPlan,
   advanceTimer,
   extendStep,
+  dateAt,
+  dayChoice,
   groupByDay,
   nightBefore,
   habitHistory,
@@ -100,6 +103,7 @@ import {
   shiftDay,
   startNowPlan,
   timeOf,
+  toDayString,
 } from './src/schedule'
 
 const HOUR_PX = 80
@@ -244,9 +248,13 @@ function DayPage() {
   // Every day's blocks and todos once loaded, so switching to a day shows it at
   // once while a refresh runs behind it. A day not loaded yet shows empty, never
   // another day's blocks.
-  const [byDay, setByDay] = useState<Record<string, { items: CalItem[]; todos: Todo[] }>>({})
+  const [byDay, setByDay] = useState<Record<string, { items: CalItem[]; todos: Todo[]; overdue?: Todo[] }>>({})
   const items = byDay[day]?.items ?? []
   const todos = byDay[day]?.todos ?? []
+  // Today only: unfinished todos (not habits) from earlier days
+  const overdue = day === today ? (byDay[day]?.overdue ?? []) : []
+  // Every todo a card can act on, overdue ones included
+  const cardTodos = [...todos, ...overdue]
   // Per day, only the latest load may write, so a slow older response can't land
   // on top of a newer one
   const loadRuns = useRef(new Map<string, number>())
@@ -433,7 +441,23 @@ function DayPage() {
         .order('day')
         .order('start_time')
       if (todoRes.error) setError(todoRes.error.message)
+      const overdueRes =
+        d === today
+          ? await supabase
+              .from('cass_time_blocks')
+              .select('id,title,day,start_time,end_time,habit_id')
+              .eq('source', 'app')
+              .eq('done', false)
+              .lt('logical_day', d)
+              .order('day')
+              .order('start_time')
+          : { data: [] as { id: string; title: string; day: string; start_time: string; end_time: string | null; habit_id: string | null }[], error: null }
+      if (overdueRes.error) setError(overdueRes.error.message)
       if (loadRuns.current.get(d) !== run) return
+      const dayOverdue = (overdueRes.data ?? []).map((t) => {
+        const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
+        return { id: t.id, title: t.title, day: logicalDay, start, end, habit: false, habitId: null }
+      })
       const dayTodos = (todoRes.data ?? []).map((t) => {
         const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
         return {
@@ -447,7 +471,7 @@ function DayPage() {
           habitId: t.habit_id,
         }
       })
-      setByDay((prev) => ({ ...prev, [d]: { items: current, todos: dayTodos } }))
+      setByDay((prev) => ({ ...prev, [d]: { items: current, todos: dayTodos, overdue: dayOverdue } }))
     },
     [today, fetchDayItems, placeHabitBlocks],
   )
@@ -554,7 +578,7 @@ function DayPage() {
   // The card's slider saves a new length, then the card shows the new end
   const resizeDetail = async (d: Detail, minutes: number) => {
     if (d.from === 'todo') {
-      const todo = todos.find((t) => t.id === d.id)
+      const todo = cardTodos.find((t) => t.id === d.id)
       if (!todo) return setError('That todo changed; close the card and open it again')
       await setMinutes(todo, minutes)
     } else {
@@ -571,9 +595,9 @@ function DayPage() {
   const moveDetail = async (d: Detail, start: number) => {
     let plan
     if (d.from === 'todo') {
-      const todo = todos.find((t) => t.id === d.id)
+      const todo = cardTodos.find((t) => t.id === d.id)
       if (!todo) return setError('That todo changed; close the card and open it again')
-      plan = moveTodoStartPlan(todos, todo, start)
+      plan = moveTodoStartPlan(cardTodos, todo, start)
       if ('error' in plan) return setError(plan.error)
       if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
       return setDetail({ ...d, start, end: start + (d.end - d.start) })
@@ -587,8 +611,23 @@ function DayPage() {
     setDetail({ ...d, start, end: start + (d.end - d.start) })
   }
 
+  // The card's Date row moves a todo or habit to another day at the same time.
+  // A habit can't land on a day that already has one (one per habit per day).
+  const moveToDay = async (d: Detail, newDay: string) => {
+    if (newDay === d.day) return
+    setDetail(null)
+    const { error } = await supabase
+      .from('cass_time_blocks')
+      .update(toStored(newDay, d.start, d.end))
+      .eq('id', d.id)
+    if (error) {
+      return setError(error.code === '23505' ? 'That habit is already on that day' : error.message)
+    }
+    await Promise.all([loadDay(d.day), loadDay(newDay), loadDay(today)])
+  }
+
   const setMinutes = async (todo: Todo, minutes: number) => {
-    const plan = resizePlan(todos, todo, minutes)
+    const plan = resizePlan(cardTodos, todo, minutes)
     if ('error' in plan) return setError(plan.error)
     if (plan.moves.length) await saveMoves(plan.moves, () => todo.day)
   }
@@ -791,6 +830,26 @@ function DayPage() {
           >
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
+            {tab === 'todos' && overdue.length ? (
+              <>
+                <Text style={[styles.sectionLabel, styles.overdueLabel]}>OVERDUE</Text>
+                <View style={[styles.card, styles.overdueCard]}>
+                  {overdue.map((t) => (
+                    <Pressable
+                      key={t.id}
+                      style={styles.todoRow}
+                      onPress={() =>
+                        setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: false, event: false, habitId: null })
+                      }
+                    >
+                      <Text style={[styles.todoText, { flex: 1 }]}>{t.title}</Text>
+                      <Text style={styles.minutesLabel}>{dayLabel(t.day)}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.sectionLabel}>TODAY</Text>
+              </>
+            ) : null}
             {tab === 'todos' ? (
               <View style={styles.card}>
                 <TodoList todos={todos} today={today} onMinutes={setMinutes} onReorder={reorder} onDragging={setDragging} onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null })} />
@@ -880,6 +939,7 @@ function DayPage() {
                 .sort((x, y) => x.start - y.start)
                 .map((it) => ({ id: it.id, title: it.title, start: it.start, end: it.end }))}
               help={help}
+              onMoveToDay={moveToDay}
             />
           ) : null}
         </Pressable>
@@ -1839,6 +1899,7 @@ function DetailCard({
   onStartRoutine,
   parts,
   help,
+  onMoveToDay,
 }: {
   detail: Detail
   today: string
@@ -1850,7 +1911,10 @@ function DetailCard({
   // Recorded routine steps under this block
   parts: { id: string; title: string; start: number; end: number }[]
   help: HelpGroup[]
+  // Date row (todos and habits from the Todos tab): moves it to another day
+  onMoveToDay: (detail: Detail, day: string) => void
 }) {
+  const [pickingDate, setPickingDate] = useState(false)
   // Context: the Help events tied to this habit, day by day
   const [showContext, setShowContext] = useState(false)
   // The full page of every day, opened from View all
@@ -1942,6 +2006,44 @@ function DetailCard({
             {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
           </Text>
 
+{detail.from === 'todo' ? (
+  <>
+    <View style={styles.sliderRow}>
+      <Text style={styles.sliderLabel}>Date</Text>
+      <View style={styles.durations}>
+        {(['today', '1d', '3d'] as const).map((choice) => {
+          const target = dayChoice(choice, today)
+          const active = target === detail.day
+          return (
+            <Pressable
+              key={choice}
+              style={[styles.duration, active && styles.durationSelected]}
+              onPress={() => onMoveToDay(detail, target)}
+              accessibilityLabel={choice === 'today' ? 'Today' : `In ${choice}`}
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.durationText, active && styles.durationTextSelected]}>{choice === 'today' ? 'Today' : choice}</Text>
+            </Pressable>
+          )
+        })}
+        <Pressable style={styles.duration} onPress={() => setPickingDate(!pickingDate)} accessibilityLabel="Pick a date">
+          <CalendarDays size={16} color={c.ink} />
+        </Pressable>
+      </View>
+    </View>
+    {pickingDate ? (
+      <DateTimePicker
+        value={dateAt(detail.day, 12)}
+        mode="date"
+        display="inline"
+        onChange={(_e, picked) => {
+          setPickingDate(false)
+          if (picked) onMoveToDay(detail, toDayString(picked))
+        }}
+      />
+    ) : null}
+  </>
+) : null}
           {/* A set-time habit stays at its time; an event's time is yours to move */}
           {detail.fixed && !detail.event ? (
             <View style={styles.sliderRow}>
@@ -2621,6 +2723,8 @@ const styles = StyleSheet.create({
   historyList: { flexGrow: 0 },
   subRow: { paddingLeft: 24 },
   contextDay: { paddingHorizontal: 8, paddingTop: 6 },
+  overdueLabel: { color: c.now },
+  overdueCard: { borderColor: c.now, marginBottom: 6 },
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   viewAll: { fontSize: 14, fontWeight: '600', color: c.accent, paddingHorizontal: 8, paddingTop: 8 },

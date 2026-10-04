@@ -24,6 +24,7 @@ import {
   advanceTimer,
   extendStep,
   resumeTimer,
+  dayChoice,
   groupByDay,
   nightBefore,
   habitHistory,
@@ -446,6 +447,13 @@ test('nightBefore finds when the habit was done the night before each day', () =
   assert.equal(nightBefore(blocks, '2026-10-02'), at(24, 40))
   assert.equal(nightBefore(blocks, '2026-10-01'), 'not done')
   assert.equal(nightBefore(blocks, '2026-09-30'), null) // no block that night
+})
+
+test('dayChoice turns Today, 1d and 3d into days counted from today', () => {
+  assert.equal(dayChoice('today', DAY), DAY)
+  assert.equal(dayChoice('1d', DAY), '2026-10-02')
+  assert.equal(dayChoice('3d', DAY), '2026-10-04')
+  assert.equal(dayChoice('1d', '2026-10-31'), '2026-11-01')
 })
 
 test('Start now moves the block to this minute and carries later todos and habits down', () => {
