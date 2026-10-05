@@ -34,6 +34,7 @@ import {
   Moon,
   LogOut,
   MoreHorizontal,
+  Trash2,
   NotebookPen,
   Pause,
   Play,
@@ -704,6 +705,14 @@ function DayPage() {
     await Promise.all([loadDay(d.day), loadDay(today)])
   }
 
+  // The card's ⋯ Delete: removes the todo; the todos after it stay where they are
+  const deleteTodo = async (d: Detail) => {
+    setDetail(null)
+    const { error } = await supabase.from('cass_time_blocks').delete().eq('id', d.id)
+    if (error) return setError(error.message)
+    await Promise.all([loadDay(d.day), d.day === day ? null : load()])
+  }
+
   // Done at its scheduled end from the card: marked done as scheduled, nothing moves
   const doneAtScheduledEnd = async (d: Detail) => {
     setDetail(null)
@@ -1056,6 +1065,7 @@ function DayPage() {
                 .map((it) => ({ id: it.id, title: it.title, start: it.start, end: it.end }))}
               help={help}
               onMoveToDay={moveToDay}
+              onDelete={detail.from === 'todo' && !detail.habitId && !detail.event ? deleteTodo : undefined}
             />
           ) : null}
         </Pressable>
@@ -2018,6 +2028,7 @@ function DetailCard({
   parts,
   help,
   onMoveToDay,
+  onDelete,
 }: {
   detail: Detail
   today: string
@@ -2031,8 +2042,11 @@ function DetailCard({
   help: HelpGroup[]
   // Date row (todos and habits from the Todos tab): moves it to another day
   onMoveToDay: (detail: Detail, day: string) => void
+  // The ⋯ menu's Delete; left out where deleting wouldn't stick (habits come back)
+  onDelete?: (detail: Detail) => void
 }) {
   const [pickingDate, setPickingDate] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
   // Context: the Help events tied to this habit, day by day
   const [showContext, setShowContext] = useState(false)
   // The full page of every day, opened from View all
@@ -2083,7 +2097,26 @@ function DetailCard({
             <Text style={styles.modeSwitch}>{showContext ? 'General' : 'Context'}</Text>
           </Pressable>
         ) : null}
+        {onDelete ? (
+          <Pressable
+            style={styles.moreButton}
+            onPress={() => setMoreOpen(!moreOpen)}
+            hitSlop={8}
+            accessibilityLabel="More"
+            accessibilityState={{ expanded: moreOpen }}
+          >
+            <MoreHorizontal size={18} color={c.ink} />
+          </Pressable>
+        ) : null}
       </View>
+      {moreOpen && onDelete ? (
+        <View style={[styles.menu, styles.moreMenu]}>
+          <Pressable style={[styles.menuItem, styles.menuRow]} onPress={() => onDelete(detail)}>
+            <Trash2 size={16} color={c.now} />
+            <Text style={[styles.menuText, styles.deleteText]}>Delete</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {showContext ? (
         <View style={styles.parts}>
           {!contextTitles.length ? (
@@ -2863,6 +2896,9 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  moreButton: { alignSelf: 'center', marginLeft: 12 },
+  moreMenu: { top: 44, right: 12 },
+  deleteText: { color: c.now, fontWeight: '600' },
   durationsSaving: { justifyContent: 'center', alignItems: 'center', minHeight: 30 },
   backButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   backText: { fontSize: 16, fontWeight: '600', color: c.accent },
