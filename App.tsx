@@ -19,7 +19,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native'
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import {
@@ -1338,6 +1338,8 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
   const [error, setError] = useState<string | null>(null)
   // Tapping the photo shows it full screen, pinch to zoom
   const [fullPhoto, setFullPhoto] = useState(false)
+  // The close button sits below the status bar and Dynamic Island
+  const insets = useSafeAreaInsets()
 
   const loadItems = useCallback(async () => {
     const { data, error } = await supabase
@@ -1464,8 +1466,10 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
         </View>
       </ScrollView>
 
-      <Modal visible={fullPhoto && !!photoUri} animationType="fade" onRequestClose={() => setFullPhoto(false)}>
-        <View style={styles.photoViewer}>
+      {/* A layer over the page, not a second Modal: iOS doesn't reliably close a
+          Modal opened from inside another. Tapping the photo or the X closes it. */}
+      {fullPhoto && photoUri ? (
+        <View style={[StyleSheet.absoluteFill, styles.photoViewer]}>
           <ScrollView
             style={styles.screenFill}
             contentContainerStyle={styles.photoViewerContent}
@@ -1475,15 +1479,21 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
             showsHorizontalScrollIndicator={false}
             showsVerticalScrollIndicator={false}
           >
-            {photoUri ? <Image source={{ uri: photoUri }} style={styles.photoViewerImage} resizeMode="contain" accessibilityLabel="Photo of the list" /> : null}
-          </ScrollView>
-          <SafeAreaView style={styles.photoViewerClose} edges={['top']}>
-            <Pressable onPress={() => setFullPhoto(false)} hitSlop={12} accessibilityLabel="Close photo" style={styles.photoViewerCloseButton}>
-              <X size={22} color="#ffffff" />
+            <Pressable style={styles.screenFill} onPress={() => setFullPhoto(false)} accessibilityLabel="Close photo">
+              <Image source={{ uri: photoUri }} style={styles.photoViewerImage} resizeMode="contain" />
             </Pressable>
-          </SafeAreaView>
+          </ScrollView>
+          <Pressable
+            onPress={() => setFullPhoto(false)}
+            hitSlop={16}
+            accessibilityRole="button"
+            accessibilityLabel="Close photo"
+            style={[styles.photoViewerCloseButton, { top: insets.top + 8 }]}
+          >
+            <X size={22} color="#ffffff" />
+          </Pressable>
         </View>
-      </Modal>
+      ) : null}
     </SafeAreaView>
   )
 }
@@ -3198,11 +3208,10 @@ const styles = StyleSheet.create({
   buttonQuietDisabled: { opacity: 0.5 },
   captureQuietText: { fontSize: 16, fontWeight: '600', color: c.accent },
   readingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 8 },
-  photoViewer: { flex: 1, backgroundColor: '#000000' },
+  photoViewer: { backgroundColor: '#000000', zIndex: 20 },
   photoViewerContent: { flexGrow: 1, justifyContent: 'center' },
   photoViewerImage: { width: '100%', height: '100%' },
-  photoViewerClose: { position: 'absolute', top: 0, right: 0, padding: 12 },
-  photoViewerCloseButton: { backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
+  photoViewerCloseButton: { position: 'absolute', right: 12, zIndex: 2, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: 8 },
   todoDoneText: { textDecorationLine: 'line-through', color: c.muted },
   moreButton: { alignSelf: 'center', marginLeft: 12 },
   moreMenu: { top: 44, right: 12 },
