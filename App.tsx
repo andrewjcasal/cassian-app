@@ -1384,6 +1384,13 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
     setReading(false)
     if (error) {
       const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
+      const status = (error as { context?: Response }).context?.status
+      // 502 is the read step: the photo is already saved, and there's no working
+      // Anthropic key yet, so the todos get added from a Claude session for now
+      if (status === 502 && imageBase64) {
+        setPhotoPath((p) => p ?? 'uploaded')
+        return setError('Photo saved. Reading it automatically is not set up yet, so ask Claude to add the todos from it.')
+      }
       return setError(detail?.error ?? error.message)
     }
     // The function saved the photo; the picked one is already showing, so only the flag matters here
