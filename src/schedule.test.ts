@@ -300,6 +300,16 @@ test('Auto-schedule: a todo moved to today starts at the next open time from now
   assert.equal(moveToDayStart([], 0.5, '2026-09-30', DAY, at(21, 0)), null)
 })
 
+test('A set-time habit like Shut down can still be moved by hand with its start slider', () => {
+  const shutdown = block('shutdown', at(22, 30), at(23, 15), { source: 'habit', habitId: 'h', fixed: true })
+  const plan = moveStartPlan([block('todo', 20, 21), shutdown], shutdown, 23)
+  if (!('moves' in plan)) throw new Error(plan.error)
+  assert.deepEqual(fmt(plan.moves), ['shutdown@23:00-23:45'])
+  const todoPlan = moveTodoStartPlan([{ ...todo('shutdown', at(22, 30), at(23, 15)), fixed: true }], { ...todo('shutdown', at(22, 30), at(23, 15)), fixed: true }, 22)
+  if (!('moves' in todoPlan)) throw new Error(todoPlan.error)
+  assert.deepEqual(fmt(todoPlan.moves), ['shutdown@22:00-22:45'])
+})
+
 test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {
   const habits = [
     { id: 'skool', title: 'Skool replies', minutes: 15 },

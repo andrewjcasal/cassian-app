@@ -2581,14 +2581,9 @@ function DetailCard({
     ) : null}
   </>
 ) : null}
-          {/* A set-time habit stays at its time; an event's time is yours to move */}
-          {detail.fixed && !detail.event ? (
-            <View style={styles.sliderRow}>
-              <Text style={styles.sliderLabel}>Start</Text>
-              <Text style={styles.minutesLabel}>Fixed at {clock(detail.start)}</Text>
-            </View>
-          ) : (
-            <View style={styles.sliderRow}>
+          {/* Every block's start is yours to move, a set-time habit like Shut down
+              included; the automatic rules still leave set-time habits where they are */}
+          <View style={styles.sliderRow}>
               <Text style={styles.sliderLabel}>Start</Text>
               <SteadySlider
                 style={styles.slider}
@@ -2606,8 +2601,7 @@ function DetailCard({
                 }}
                 accessibilityLabel="Move the start time earlier or later"
               />
-            </View>
-          )}
+          </View>
 
           <View style={styles.sliderRow}>
             <Text style={styles.sliderLabel}>Duration</Text>
