@@ -1221,6 +1221,13 @@ const ROUTINES: Record<string, RoutineStep[]> = {
   ],
 }
 
+// A full page shown in a Modal. SafeAreaView can get no insets inside a Modal,
+// which put the Back button under the clock, so this pads by the device's insets
+function ModalScreen({ style, children }: { style: ComponentProps<typeof View>['style']; children: React.ReactNode }) {
+  const insets = useSafeAreaInsets()
+  return <View style={[style, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>{children}</View>
+}
+
 // The gear's page: settings, then Sign out at the bottom
 function SettingsPage({
   autoSchedule,
@@ -1236,7 +1243,7 @@ function SettingsPage({
   // The ⓘ beside a setting shows what it does, tap again to hide
   const [explaining, setExplaining] = useState(false)
   return (
-    <SafeAreaView style={styles.screen}>
+    <ModalScreen style={styles.screen}>
       <View style={[styles.header, styles.fixedHeader]}>
         <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Back" style={[styles.backButton, { width: 64 }]}>
           <ChevronLeft size={18} color={c.accent} />
@@ -1283,7 +1290,7 @@ function SettingsPage({
           <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       </ScrollView>
-    </SafeAreaView>
+    </ModalScreen>
   )
 }
 
@@ -1502,7 +1509,7 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
   }
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <ModalScreen style={styles.screen}>
       <View style={[styles.header, styles.fixedHeader]}>
         <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Back" style={[styles.backButton, { width: 64 }]}>
           <ChevronLeft size={18} color={c.accent} />
@@ -1589,7 +1596,7 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
           </Pressable>
         </View>
       ) : null}
-    </SafeAreaView>
+    </ModalScreen>
   )
 }
 
@@ -2508,7 +2515,7 @@ function DetailCard({
                 </Pressable>
               ) : null}
               <Modal visible={showAll} animationType="slide" onRequestClose={() => setShowAll(false)}>
-                <SafeAreaView style={styles.screen}>
+                <ModalScreen style={styles.screen}>
                   <View style={[styles.header, styles.fixedHeader]}>
                     <Pressable onPress={() => setShowAll(false)} hitSlop={10} accessibilityLabel="Back">
                       <ChevronLeft size={22} color={c.ink} />
@@ -2519,7 +2526,7 @@ function DetailCard({
                   <ScrollView contentContainerStyle={styles.page}>
                     <ContextDays days={context} nights={habitNights} habitTitle={detail.title} />
                   </ScrollView>
-                </SafeAreaView>
+                </ModalScreen>
               </Modal>
             </>
           ) : context ? (
@@ -2801,7 +2808,7 @@ function RoutineTimer({
   }
 
   return (
-    <SafeAreaView style={styles.timerScreen}>
+    <ModalScreen style={styles.timerScreen}>
       <Animated.View style={[styles.timerContent, { transform: [{ translateX: slide }] }]}>
         <Text style={styles.timerStep}>{step.name}</Text>
         <Text style={styles.timerClock}>{state.remainingMs === null ? mmss(state.elapsedMs) : mmss(state.remainingMs)}</Text>
@@ -2869,7 +2876,7 @@ function RoutineTimer({
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </ModalScreen>
   )
 }
 
