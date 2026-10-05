@@ -38,6 +38,8 @@ export type Move = { id: string; kind: 'block' | 'task'; start: number; end: num
 
 // New todos and follow-ups look for a gap from here
 export const FILL_FROM_HOUR = 15
+// "Anytime" habits (Skool replies, LinkedIn replies) can go as early as 8am
+export const ANYTIME_FROM_HOUR = 8
 
 // Lengths a todo can step through, in minutes
 export const DURATION_STEPS = [5, 15, 30, 45, 60, 90, 120, 180, 240]
@@ -196,6 +198,13 @@ export function habitSearchFrom(day: string, today: string, now: number) {
   return day === today ? nextQuarter(now) : FILL_FROM_HOUR
 }
 
+// The same for an anytime habit: from 8am, or today from the next quarter hour
+// once it's past 8am. A past day gets none (null).
+export function anytimeSearchFrom(day: string, today: string, now: number) {
+  if (day < today) return null
+  return day === today ? Math.max(ANYTIME_FROM_HOUR, nextQuarter(now)) : ANYTIME_FROM_HOUR
+}
+
 // 0 = Sunday ... 6 = Saturday for a "YYYY-MM-DD" day
 export function weekdayOf(day: string) {
   const [y, m, d] = day.split('-').map(Number)
@@ -270,23 +279,26 @@ export function habitHistory(
 }
 
 // Every habit without a block on the day yet goes into the first gap that fits
-// it, looking from `from`. Each placement counts as taken for the next.
+// it, looking from `from`, or from `anytimeFrom` for an anytime habit. Each
+// placement counts as taken for the next.
 export function placeHabits(
   items: CalItem[],
   // `start` is a set time of day (hours) for habits like Shut down at 11pm
-  habits: { id: string; title: string; minutes: number; start?: number | null }[],
+  habits: { id: string; title: string; minutes: number; start?: number | null; anytime?: boolean }[],
   from: number,
+  anytimeFrom: number = from,
 ) {
   const placed = new Set(items.map((it) => it.habitId).filter(Boolean))
   const occupied = [...items]
   const out: { habitId: string; title: string; start: number; end: number }[] = []
   // Set-time habits go first, at their time even if it has passed, so the rest
-  // fill the gaps around them
-  const ordered = [...habits.filter((h) => h.start != null), ...habits.filter((h) => h.start == null)]
+  // fill the gaps around them; then anytime ones, so they take the morning
+  const floating = habits.filter((h) => h.start == null)
+  const ordered = [...habits.filter((h) => h.start != null), ...floating.filter((h) => h.anytime), ...floating.filter((h) => !h.anytime)]
   for (const h of ordered) {
     if (placed.has(h.id)) continue
     const length = h.minutes / 60
-    const start = h.start != null ? h.start : freeSlot(occupied, from, length)
+    const start = h.start != null ? h.start : freeSlot(occupied, h.anytime ? anytimeFrom : from, length)
     if (start === null || start + length > DAY_END + EPS) continue
     out.push({ habitId: h.id, title: h.title, start, end: start + length })
     occupied.push({ id: h.id, title: h.title, start, end: start + length, kind: 'block', done: false, habitId: h.id })

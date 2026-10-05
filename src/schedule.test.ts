@@ -40,6 +40,7 @@ import {
   habitsForDay,
   weekStart,
   habitSearchFrom,
+  anytimeSearchFrom,
   placeHabits,
   quarterOf,
   relayout,
@@ -251,6 +252,31 @@ test('advanceTimer moves to the next step when time is up, even several steps at
   assert.deepEqual(advanceTimer(steps, 0, t0, t0 + 6 * min), { index: 1, stepStartedAt: t0 + 5 * min, remainingMs: 4 * min, elapsedMs: min })
   // 13 minutes in (phone was locked): through Wet food into Puzzles, which counts up
   assert.deepEqual(advanceTimer(steps, 0, t0, t0 + 13 * min), { index: 2, stepStartedAt: t0 + 10 * min, remainingMs: null, elapsedMs: 3 * min })
+})
+
+test('Anytime habits go back to back from 8am, before the habits that wait for 3pm', () => {
+  const habits = [
+    { id: 'skool', title: 'Skool replies', minutes: 15, anytime: true },
+    { id: 'linkedin', title: 'LinkedIn replies', minutes: 15, anytime: true },
+    { id: 'shower', title: 'Shower', minutes: 30 },
+  ]
+  const tomorrow = '2026-10-03'
+  const placed = placeHabits([], habits, habitSearchFrom(tomorrow, DAY, at(18, 6))!, anytimeSearchFrom(tomorrow, DAY, at(18, 6))!)
+  assert.deepEqual(fmt(placed.map((p) => ({ ...p, id: p.habitId }))), ['skool@08:00-08:15', 'linkedin@08:15-08:30', 'shower@15:00-15:30'])
+})
+
+test('Today, anytime habits start from the next quarter hour, never before 8am', () => {
+  assert.equal(anytimeSearchFrom(DAY, DAY, at(8, 4)), at(8, 15))
+  assert.equal(anytimeSearchFrom(DAY, DAY, at(6, 30)), 8)
+  assert.equal(anytimeSearchFrom('2026-10-03', DAY, at(18, 6)), 8)
+  assert.equal(anytimeSearchFrom('2026-09-30', DAY, at(18, 6)), null)
+  // An 8am todo already there: they go after it, still back to back
+  const items = [block('gym', 8, 9)]
+  const habits = [
+    { id: 'skool', title: 'Skool replies', minutes: 15, anytime: true },
+    { id: 'linkedin', title: 'LinkedIn replies', minutes: 15, anytime: true },
+  ]
+  assert.deepEqual(fmt(placeHabits(items, habits, 15, 8).map((p) => ({ ...p, id: p.habitId }))), ['skool@09:00-09:15', 'linkedin@09:15-09:30'])
 })
 
 test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {

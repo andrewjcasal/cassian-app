@@ -115,6 +115,7 @@ import {
   habitsForDay,
   weekStart,
   habitSearchFrom,
+  anytimeSearchFrom,
   placeHabits,
   quarterOf,
   relayout,
@@ -430,7 +431,7 @@ function DayPage() {
     async (current: CalItem[], day: string) => {
       const { data: habits, error } = await supabase
         .from('cass_habits')
-        .select('id,title,minutes,frequency,weekday,start_time')
+        .select('id,title,minutes,frequency,weekday,start_time,anytime')
         .order('sort_order')
       if (error) return setError(error.message), false
       const from = habitSearchFrom(day, today, nowHours())
@@ -446,7 +447,7 @@ function DayPage() {
         day,
         (weekBlocks ?? []) as { habit_id: string; logical_day: string; habit_week: string | null }[],
       ).map((h) => ({ ...h, start: h.start_time ? habitStartHours(h.start_time) : null }))
-      const placements = placeHabits(current, forDay, from)
+      const placements = placeHabits(current, forDay, from, anytimeSearchFrom(day, today, nowHours()) ?? from)
       for (const p of placements) {
         const { error: insertError } = await supabase.from('cass_time_blocks').upsert(
           {
