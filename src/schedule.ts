@@ -205,6 +205,15 @@ export function anytimeSearchFrom(day: string, today: string, now: number) {
   return day === today ? Math.max(ANYTIME_FROM_HOUR, nextQuarter(now)) : ANYTIME_FROM_HOUR
 }
 
+// Auto-schedule (Settings, on by default): a todo or habit moved to another day
+// with the card's Date row takes that day's first open time from 8am, or from the
+// next quarter hour when it's moved to today. Null on a past day or a full day,
+// where it keeps its own time. `items` is the new day's blocks, without this one.
+export function moveToDayStart(items: CalItem[], length: number, day: string, today: string, now: number) {
+  const from = anytimeSearchFrom(day, today, now)
+  return from === null ? null : freeSlot(items, from, length)
+}
+
 // 0 = Sunday ... 6 = Saturday for a "YYYY-MM-DD" day
 export function weekdayOf(day: string) {
   const [y, m, d] = day.split('-').map(Number)

@@ -41,6 +41,7 @@ import {
   weekStart,
   habitSearchFrom,
   anytimeSearchFrom,
+  moveToDayStart,
   placeHabits,
   quarterOf,
   relayout,
@@ -277,6 +278,23 @@ test('Today, anytime habits start from the next quarter hour, never before 8am',
     { id: 'linkedin', title: 'LinkedIn replies', minutes: 15, anytime: true },
   ]
   assert.deepEqual(fmt(placeHabits(items, habits, 15, 8).map((p) => ({ ...p, id: p.habitId }))), ['skool@09:00-09:15', 'linkedin@09:15-09:30'])
+})
+
+test('Auto-schedule: a todo moved to another day takes that day\'s first open time from 8am', () => {
+  const tomorrow = '2026-10-03'
+  assert.equal(moveToDayStart([], 0.5, tomorrow, DAY, at(21, 0)), 8)
+  assert.equal(moveToDayStart([block('gym', 8, 9), block('call', 9, at(9, 30))], 0.5, tomorrow, DAY, at(21, 0)), at(9, 30))
+  // A gap too short for it is skipped
+  assert.equal(moveToDayStart([block('a', 8, at(8, 15)), block('b', at(8, 30), 10)], 0.5, tomorrow, DAY, at(21, 0)), 10)
+})
+
+test('Auto-schedule: a todo moved to today starts at the next open time from now', () => {
+  assert.equal(moveToDayStart([], 0.5, DAY, DAY, at(21, 0)), 21)
+  assert.equal(moveToDayStart([block('x', 21, 22)], 0.5, DAY, DAY, at(20, 50)), 22)
+  // Before 8am it waits for 8
+  assert.equal(moveToDayStart([], 0.5, DAY, DAY, at(6, 30)), 8)
+  // A past day has no open time to find
+  assert.equal(moveToDayStart([], 0.5, '2026-09-30', DAY, at(21, 0)), null)
 })
 
 test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {

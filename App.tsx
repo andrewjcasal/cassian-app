@@ -16,6 +16,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  Switch,
   View,
   useWindowDimensions,
 } from 'react-native'
@@ -37,6 +38,7 @@ import {
   ImagePlus,
   ListTodo,
   Moon,
+  Info,
   LogOut,
   MoreHorizontal,
   Trash2,
@@ -116,6 +118,7 @@ import {
   weekStart,
   habitSearchFrom,
   anytimeSearchFrom,
+  moveToDayStart,
   placeHabits,
   quarterOf,
   relayout,
@@ -374,8 +377,29 @@ function DayPage() {
   // The routine timer that's running, if any (full page)
   const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
   const [dragging, setDragging] = useState(false)
-  // Where the settings icon was tapped, so its menu opens beside it
-  const [settingsMenu, setSettingsMenu] = useState<{ x: number; y: number } | null>(null)
+  // The Settings page (the gear on every tab)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const openSettings = () => setSettingsOpen(true)
+  // Auto-schedule (cass_settings, on by default): moving a todo to another day
+  // puts it at that day's first open time from 8am (moveToDayStart)
+  const [autoSchedule, setAutoSchedule] = useState(true)
+  useEffect(() => {
+    supabase
+      .from('cass_settings')
+      .select('auto_schedule')
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setAutoSchedule(data.auto_schedule)
+      })
+  }, [])
+  const changeAutoSchedule = async (on: boolean) => {
+    setAutoSchedule(on)
+    const { error } = await supabase.from('cass_settings').upsert({ auto_schedule: on, updated_at: new Date().toISOString() })
+    if (error) {
+      setAutoSchedule(!on)
+      setError(error.message)
+    }
+  }
   // Only pull to refresh shows the spinner; every other load happens quietly
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -665,9 +689,20 @@ function DayPage() {
   const moveToDay = async (d: Detail, newDay: string) => {
     if (newDay === d.day) return
     setDetail(null)
+    // With Auto-schedule on it takes the new day's first open time; a set-time
+    // habit, a past day or a full day keeps its own time
+    let { start, end } = d
+    if (autoSchedule && !d.fixed) {
+      const dayItems = (byDay[newDay]?.items ?? (await fetchDayItems(newDay))).filter((it) => it.id !== d.id)
+      const slot = moveToDayStart(dayItems, d.end - d.start, newDay, today, nowHours())
+      if (slot !== null) {
+        start = slot
+        end = slot + (d.end - d.start)
+      }
+    }
     const { error } = await supabase
       .from('cass_time_blocks')
-      .update(toStored(newDay, d.start, d.end))
+      .update(toStored(newDay, start, end))
       .eq('id', d.id)
     if (error) {
       return setError(error.code === '23505' ? 'That habit is already on that day' : error.message)
@@ -875,11 +910,11 @@ function DayPage() {
           help={help}
           onAddHelpSub={addHelpSub}
           onHelpHabit={setHelpHabit}
-          onSettings={setSettingsMenu}
+          onSettings={openSettings}
         />
       </View>
       {tab === 'planning' ? null : tab === 'help' ? (
-        <HelpScreen help={help} onSettings={setSettingsMenu} onTrack={trackHelp} />
+        <HelpScreen help={help} onSettings={openSettings} onTrack={trackHelp} />
       ) : (
       <View style={styles.screenFill} {...(tab === 'agenda' ? daySwipe.panHandlers : {})}>
         {/* Stays put while the agenda or todos scroll underneath */}
@@ -917,7 +952,7 @@ function DayPage() {
             <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
               <ChevronRight size={22} color={c.ink} />
             </Pressable>
-            <SettingsButton onOpen={setSettingsMenu} />
+            <SettingsButton onOpen={openSettings} />
           </View>
         </View>
         )}
@@ -1123,23 +1158,16 @@ function DayPage() {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal visible={settingsMenu !== null} transparent animationType="none" onRequestClose={() => setSettingsMenu(null)}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsMenu(null)}>
-          {settingsMenu ? (
-            <View style={[styles.menu, { top: settingsMenu.y + 12, right: Math.max(8, width - settingsMenu.x - 12) }]}>
-              <Pressable
-                style={[styles.menuItem, styles.menuRow]}
-                onPress={() => {
-                  setSettingsMenu(null)
-                  supabase.auth.signOut()
-                }}
-              >
-                <LogOut size={16} color={c.ink} />
-                <Text style={styles.menuText}>Sign out</Text>
-              </Pressable>
-            </View>
-          ) : null}
-        </Pressable>
+      <Modal visible={settingsOpen} animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
+        <SettingsPage
+          autoSchedule={autoSchedule}
+          onAutoSchedule={changeAutoSchedule}
+          onClose={() => setSettingsOpen(false)}
+          onSignOut={() => {
+            setSettingsOpen(false)
+            supabase.auth.signOut()
+          }}
+        />
       </Modal>
     </View>
   )
@@ -1193,7 +1221,73 @@ const ROUTINES: Record<string, RoutineStep[]> = {
   ],
 }
 
-// Opens the settings menu (just Sign out) beside where it was tapped
+// The gear's page: settings, then Sign out at the bottom
+function SettingsPage({
+  autoSchedule,
+  onAutoSchedule,
+  onClose,
+  onSignOut,
+}: {
+  autoSchedule: boolean
+  onAutoSchedule: (on: boolean) => void
+  onClose: () => void
+  onSignOut: () => void
+}) {
+  // The ⓘ beside a setting shows what it does, tap again to hide
+  const [explaining, setExplaining] = useState(false)
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={[styles.header, styles.fixedHeader]}>
+        <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Back" style={[styles.backButton, { width: 64 }]}>
+          <ChevronLeft size={18} color={c.accent} />
+          <Text style={styles.backText}>Back</Text>
+        </Pressable>
+        <Text style={styles.title}>Settings</Text>
+        <View style={{ width: 64 }} />
+      </View>
+      <ScrollView contentContainerStyle={[styles.page, styles.settingsPage]}>
+        <Text style={styles.sectionLabel}>SCHEDULING</Text>
+        <View style={styles.card}>
+          <View style={styles.settingRow}>
+            <Text style={styles.todoText}>Auto-schedule</Text>
+            <Pressable
+              onPress={() => setExplaining(!explaining)}
+              hitSlop={10}
+              accessibilityLabel="What Auto-schedule does"
+              accessibilityState={{ expanded: explaining }}
+            >
+              <Info size={16} color={explaining ? c.accent : c.muted} />
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <Switch
+              value={autoSchedule}
+              onValueChange={onAutoSchedule}
+              trackColor={{ true: c.accent }}
+              accessibilityLabel="Auto-schedule"
+            />
+          </View>
+          {explaining ? (
+            <View style={styles.tooltip}>
+              <Text style={styles.tooltipText}>
+                When you move a todo to another day, it goes to that day's first open time from 8am, back to back with what's
+                already there. Moved to today, it takes the next open time from now. Off, it keeps the time it had. Set-time
+                habits like Shut down always keep their time.
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={{ flex: 1 }} />
+        <Pressable style={styles.signOutButton} onPress={onSignOut} accessibilityRole="button">
+          <LogOut size={18} color={c.ink} />
+          <Text style={styles.signOutText}>Sign out</Text>
+        </Pressable>
+      </ScrollView>
+    </SafeAreaView>
+  )
+}
+
+// Opens the Settings page
 function SettingsButton({ onOpen }: { onOpen: (at: { x: number; y: number }) => void }) {
   return (
     <Pressable
@@ -3180,6 +3274,23 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  settingsPage: { flexGrow: 1 },
+  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 8 },
+  tooltip: { marginHorizontal: 8, marginBottom: 8, padding: 10, borderRadius: 8, backgroundColor: c.block },
+  tooltipText: { fontSize: 15, lineHeight: 21, color: c.ink },
+  signOutButton: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: c.line,
+    backgroundColor: c.card,
+  },
+  signOutText: { fontSize: 16, fontWeight: '600', color: c.ink },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center' },
   listDivider: { borderBottomWidth: 1, borderBottomColor: c.line },
   listPhoto: { width: '100%', height: 260, borderRadius: 10, backgroundColor: c.line, marginBottom: 8 },
