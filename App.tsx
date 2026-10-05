@@ -2477,7 +2477,8 @@ function DetailCard({
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
       <View style={styles.modeRow}>
         <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
-        {detail.habitId ? (
+        {/* Context only shows for a habit with Help events tied to it */}
+        {contextTitles.length ? (
           <Pressable onPress={() => setShowContext(!showContext)} hitSlop={8} accessibilityState={{ expanded: showContext }}>
             <Text style={styles.modeSwitch}>{showContext ? 'General' : 'Context'}</Text>
           </Pressable>
