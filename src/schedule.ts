@@ -40,6 +40,8 @@ export type Move = { id: string; kind: 'block' | 'task'; start: number; end: num
 export const FILL_FROM_HOUR = 15
 // "Anytime" habits (Skool replies, LinkedIn replies) can go as early as 8am
 export const ANYTIME_FROM_HOUR = 8
+// New todos and follow-ups also start looking at 8am
+export const TODO_FROM_HOUR = 8
 
 // Lengths a todo can step through, in minutes
 export const DURATION_STEPS = [5, 15, 30, 45, 60, 90, 120, 180, 240]
@@ -184,10 +186,11 @@ export function freeSlot(items: CalItem[], from: number, length: number) {
 }
 
 // Where a new todo or follow-up of `length` hours starts: the first gap that fits
-// it, looking from 3pm, or from the next quarter hour today if that's later. Null
-// if nothing fits before 2am.
+// it, looking from 8am, or from the next quarter hour today if that's later. Null
+// if nothing fits before 2am. (Habits on an upcoming day still wait for 3pm,
+// FILL_FROM_HOUR, unless they're anytime.)
 export function newBlockStart(items: CalItem[], length: number, isToday: boolean, now: number) {
-  const from = isToday ? Math.max(FILL_FROM_HOUR, nextQuarter(now)) : FILL_FROM_HOUR
+  const from = isToday ? Math.max(TODO_FROM_HOUR, nextQuarter(now)) : TODO_FROM_HOUR
   return freeSlot(items, from, length)
 }
 

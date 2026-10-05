@@ -84,17 +84,20 @@ test('freeSlot finds the first gap that fits', () => {
   assert.equal(freeSlot([block('a', 20, 24)], at(23, 54), 0.25), 24)
 })
 
-test('newBlockStart puts a new todo or follow-up in the first gap from 3pm or the next quarter hour', () => {
+test('newBlockStart puts a new todo or follow-up in the first gap from 8am or the next quarter hour', () => {
   const items = [block('a', 15, 16), block('b', 17, 18), block('c', 18, 21)]
-  // Today at 2:40pm: the 3pm floor wins, and 3 to 4 is taken, so 4pm is the first hour gap
+  // Today at 9:05am: it starts at the next quarter hour, not waiting for the afternoon
+  assert.equal(newBlockStart(items, 1, true, at(9, 5)), at(9, 15))
+  // Today at 2:40pm: next quarter hour is 2:45, but 3 to 4 is taken, so 4pm is the first hour gap
   assert.equal(newBlockStart(items, 1, true, at(14, 40)), 16)
-  // Today at 4:10pm: next quarter hour is 4:15, but only 45 minutes are free before 5
+  // Today at 4:10pm: only 45 minutes are free before 5
   assert.equal(newBlockStart(items, 1, true, at(16, 10)), 21)
   assert.equal(newBlockStart(items, 0.5, true, at(16, 10)), at(16, 15))
-  // Another day starts looking at 3pm
-  assert.equal(newBlockStart(items, 1, false, at(16, 10)), 16)
-  assert.equal(newBlockStart([block('late', 15, at(23, 30))], 1, true, at(14, 0)), at(23, 30))
-  assert.equal(newBlockStart([block('late', 15, at(25, 30))], 1, true, at(14, 0)), null)
+  // Before 8am today, and on another day, it starts looking at 8am
+  assert.equal(newBlockStart(items, 1, true, at(6, 30)), 8)
+  assert.equal(newBlockStart(items, 1, false, at(16, 10)), 8)
+  assert.equal(newBlockStart([block('busy', 8, at(23, 30))], 1, false, at(16, 10)), at(23, 30))
+  assert.equal(newBlockStart([block('busy', 8, at(25, 30))], 1, false, at(16, 10)), null)
 })
 
 test('placeHabits fills gaps from now and skips habits already placed', () => {
