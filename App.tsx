@@ -1336,6 +1336,8 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
   const [items, setItems] = useState<TodoListItem[] | null>(null)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Tapping the photo shows it full screen, pinch to zoom
+  const [fullPhoto, setFullPhoto] = useState(false)
 
   const loadItems = useCallback(async () => {
     const { data, error } = await supabase
@@ -1410,7 +1412,9 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
       <ScrollView contentContainerStyle={styles.page}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {photoUri ? (
-          <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" accessibilityLabel="Photo of the list" />
+          <Pressable onPress={() => setFullPhoto(true)} accessibilityRole="imagebutton" accessibilityLabel="Show the photo full screen">
+            <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" />
+          </Pressable>
         ) : null}
         <View style={styles.captureRow}>
           <Pressable style={[styles.captureButton, reading && styles.buttonDisabled]} disabled={reading} onPress={() => capture('camera')}>
@@ -1452,6 +1456,27 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
           )}
         </View>
       </ScrollView>
+
+      <Modal visible={fullPhoto && !!photoUri} animationType="fade" onRequestClose={() => setFullPhoto(false)}>
+        <View style={styles.photoViewer}>
+          <ScrollView
+            style={styles.screenFill}
+            contentContainerStyle={styles.photoViewerContent}
+            maximumZoomScale={4}
+            minimumZoomScale={1}
+            centerContent
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}
+          >
+            {photoUri ? <Image source={{ uri: photoUri }} style={styles.photoViewerImage} resizeMode="contain" accessibilityLabel="Photo of the list" /> : null}
+          </ScrollView>
+          <SafeAreaView style={styles.photoViewerClose} edges={['top']}>
+            <Pressable onPress={() => setFullPhoto(false)} hitSlop={12} accessibilityLabel="Close photo" style={styles.photoViewerCloseButton}>
+              <X size={22} color="#ffffff" />
+            </Pressable>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -3166,6 +3191,11 @@ const styles = StyleSheet.create({
   buttonQuietDisabled: { opacity: 0.5 },
   captureQuietText: { fontSize: 16, fontWeight: '600', color: c.accent },
   readingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 8 },
+  photoViewer: { flex: 1, backgroundColor: '#000000' },
+  photoViewerContent: { flexGrow: 1, justifyContent: 'center' },
+  photoViewerImage: { width: '100%', height: '100%' },
+  photoViewerClose: { position: 'absolute', top: 0, right: 0, padding: 12 },
+  photoViewerCloseButton: { backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: 8 },
   todoDoneText: { textDecorationLine: 'line-through', color: c.muted },
   moreButton: { alignSelf: 'center', marginLeft: 12 },
   moreMenu: { top: 44, right: 12 },
