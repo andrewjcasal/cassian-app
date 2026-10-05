@@ -41,6 +41,13 @@
             }
           ]
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Cassian takes a photo of a paper todo list to read the todos off it.",
+          "photosPermission": "Cassian reads the todos off a photo of a paper todo list you pick."
+        }
       ]
     ],
     "scheme": "cassian3"

@@ -3,5 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "allowImportingTsExtensions": true
-  }
+  },
+  // Edge functions run on Deno (npm:/jsr: imports, Deno.*); _shared stays in so its tests typecheck
+  "exclude": ["node_modules", "supabase/functions/*/index.ts"]
 }

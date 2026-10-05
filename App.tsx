@@ -4,6 +4,7 @@ import {
   Animated,
   Keyboard,
   KeyboardAvoidingView,
+  Image,
   Linking,
   Modal,
   PanResponder,
@@ -23,13 +24,17 @@ import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import {
   CalendarDays,
+  Camera,
   Check,
+  Circle,
+  CircleCheck,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   LifeBuoy,
   Clock,
   GripVertical,
+  ImagePlus,
   ListTodo,
   Moon,
   LogOut,
@@ -46,6 +51,17 @@ import DateTimePicker from '@react-native-community/datetimepicker'
 import Slider from '@react-native-community/slider'
 import { supabase } from './src/supabase'
 import type { CassianDayProps } from './widgets/CassianDay'
+import type { ImagePickerOptions } from 'expo-image-picker'
+
+// The camera and photo picker need the development build that includes
+// expo-image-picker; until it's installed the Todo Lists page says so.
+let imagePicker: typeof import('expo-image-picker') | null = null
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  imagePicker = require('expo-image-picker')
+} catch {
+  imagePicker = null
+}
 
 // The home screen widget only exists in the development build; Expo Go has no
 // widget native code, so it's loaded only if it's there.
@@ -1216,6 +1232,230 @@ function ScreenHeader({
   )
 }
 
+type TodoList = { id: string; title: string; photo_path: string | null; transcribed_at: string | null; count: number }
+type TodoListItem = { id: string; title: string; done: boolean }
+
+// Planning's Todo Lists: paper lists captured as a photo, each with the todos
+// read off it (transcribe-todo-list). Tapping one opens its page.
+function TodoListsSection({ active }: { active: boolean }) {
+  const [lists, setLists] = useState<TodoList[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [open, setOpen] = useState<TodoList | null>(null)
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('cass_todo_lists')
+      .select('id,title,photo_path,transcribed_at,cass_todo_list_items(count)')
+      .order('created_at', { ascending: false })
+    if (error) return setError(error.message)
+    setError(null)
+    setLists(
+      (data ?? []).map(({ cass_todo_list_items: items, ...l }) => ({
+        ...l,
+        count: (items as { count: number }[] | null)?.[0]?.count ?? 0,
+      })),
+    )
+  }, [])
+  useEffect(() => {
+    if (active) load()
+  }, [active, load])
+
+  const create = async () => {
+    const title = name.trim()
+    if (!title) return
+    const { data, error } = await supabase.from('cass_todo_lists').insert({ title }).select('id,title,photo_path,transcribed_at').single()
+    if (error) return setError(error.message)
+    setAdding(false)
+    setName('')
+    setOpen({ ...data, count: 0 })
+    load()
+  }
+
+  return (
+    <>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={[styles.sectionLabel, { flex: 1 }]}>TODO LISTS</Text>
+        <Pressable style={styles.addButton} onPress={() => setAdding(!adding)} hitSlop={8} accessibilityLabel="Add a todo list">
+          <Plus size={16} color={c.accent} />
+          <Text style={styles.addButtonText}>Add</Text>
+        </Pressable>
+      </View>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <View style={styles.card}>
+        {adding ? (
+          <View style={[styles.addRow, lists.length > 0 && styles.listDivider]}>
+            <TextInput
+              style={styles.addInput}
+              value={name}
+              onChangeText={setName}
+              placeholder="List name"
+              placeholderTextColor={c.muted}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={create}
+            />
+            <Pressable onPress={create} hitSlop={8} accessibilityLabel="Create list">
+              <Check size={20} color={c.accent} />
+            </Pressable>
+          </View>
+        ) : null}
+        {lists.map((l) => (
+          <Pressable key={l.id} style={styles.todoRow} onPress={() => setOpen(l)}>
+            <Text style={[styles.todoText, { flex: 1 }]}>{l.title}</Text>
+            <Text style={styles.minutesLabel}>
+              {l.photo_path ? `${l.count} ${l.count === 1 ? 'todo' : 'todos'}` : 'No photo yet'}
+            </Text>
+            <ChevronRight size={18} color={c.muted} />
+          </Pressable>
+        ))}
+        {!lists.length && !adding ? <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text> : null}
+      </View>
+
+      <Modal visible={open !== null} animationType="slide" onRequestClose={() => setOpen(null)}>
+        {open ? (
+          <TodoListPage
+            list={open}
+            onClose={() => {
+              setOpen(null)
+              load()
+            }}
+          />
+        ) : null}
+      </Modal>
+    </>
+  )
+}
+
+// One Todo List: the photo of the paper list (or buttons to take one), then the
+// todos read off it. A new photo replaces the todos.
+function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }) {
+  const [photoPath, setPhotoPath] = useState(list.photo_path)
+  const [photoUri, setPhotoUri] = useState<string | null>(null)
+  const [items, setItems] = useState<TodoListItem[] | null>(null)
+  const [reading, setReading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadItems = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('cass_todo_list_items')
+      .select('id,title,done')
+      .eq('list_id', list.id)
+      .order('sort_order')
+    if (error) return setError(error.message)
+    setItems(data ?? [])
+  }, [list.id])
+  useEffect(() => {
+    loadItems()
+  }, [loadItems])
+  // A saved photo is private, so it's shown through a link that lasts an hour
+  useEffect(() => {
+    if (!photoPath || photoUri) return
+    supabase.storage
+      .from('todo-lists')
+      .createSignedUrl(photoPath, 3600)
+      .then(({ data }) => data && setPhotoUri(data.signedUrl))
+  }, [photoPath, photoUri])
+
+  const capture = async (from: 'camera' | 'library') => {
+    setError(null)
+    if (!imagePicker) return setError('The camera needs the new app build. Rebuild from Xcode on the MacBook.')
+    if (from === 'camera') {
+      const permission = await imagePicker.requestCameraPermissionsAsync()
+      if (!permission.granted) return setError('Allow camera access for Cassian in Settings to take a photo.')
+    }
+    const options: ImagePickerOptions = { mediaTypes: ['images'], quality: 0.4, base64: true }
+    const result = from === 'camera' ? await imagePicker.launchCameraAsync(options) : await imagePicker.launchImageLibraryAsync(options)
+    const asset = result.canceled ? null : result.assets[0]
+    if (!asset?.base64) return
+    setPhotoUri(asset.uri)
+    await transcribe(asset.base64)
+  }
+
+  // Sends a new photo, or reads the saved one again when there's none
+  const transcribe = async (imageBase64?: string) => {
+    setReading(true)
+    const { error } = await supabase.functions.invoke('transcribe-todo-list', {
+      body: { list_id: list.id, image_base64: imageBase64 },
+    })
+    setReading(false)
+    if (error) {
+      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
+      return setError(detail?.error ?? error.message)
+    }
+    // The function saved the photo; the picked one is already showing, so only the flag matters here
+    if (imageBase64) setPhotoPath((p) => p ?? 'uploaded')
+    loadItems()
+  }
+
+  const toggle = async (item: TodoListItem) => {
+    setItems((list) => list?.map((it) => (it.id === item.id ? { ...it, done: !it.done } : it)) ?? null)
+    const { error } = await supabase.from('cass_todo_list_items').update({ done: !item.done }).eq('id', item.id)
+    if (error) setError(error.message)
+  }
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={[styles.header, styles.fixedHeader]}>
+        <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Back" style={[styles.backButton, { width: 64 }]}>
+          <ChevronLeft size={18} color={c.accent} />
+          <Text style={styles.backText}>Back</Text>
+        </Pressable>
+        <Text style={[styles.title, { flex: 1 }]} numberOfLines={1}>
+          {list.title}
+        </Text>
+        <View style={{ width: 64 }} />
+      </View>
+      <ScrollView contentContainerStyle={styles.page}>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {photoUri ? (
+          <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" accessibilityLabel="Photo of the list" />
+        ) : null}
+        <View style={styles.captureRow}>
+          <Pressable style={[styles.captureButton, reading && styles.buttonDisabled]} disabled={reading} onPress={() => capture('camera')}>
+            <Camera size={18} color="#ffffff" />
+            <Text style={styles.doneButtonText}>{photoPath ? 'Retake' : 'Take photo'}</Text>
+          </Pressable>
+          <Pressable style={[styles.captureButtonQuiet, reading && styles.buttonQuietDisabled]} disabled={reading} onPress={() => capture('library')}>
+            <ImagePlus size={18} color={c.accent} />
+            <Text style={styles.captureQuietText}>Choose photo</Text>
+          </Pressable>
+        </View>
+
+        <Text style={styles.sectionLabel}>TODOS</Text>
+        <View style={styles.card}>
+          {reading ? (
+            <View style={styles.readingRow}>
+              <ActivityIndicator size="small" color={c.accent} />
+              <Text style={styles.todoText}>Reading your list...</Text>
+            </View>
+          ) : items === null ? (
+            <ActivityIndicator style={styles.emptySection} size="small" color={c.accent} />
+          ) : items.length ? (
+            items.map((it) => (
+              <Pressable
+                key={it.id}
+                style={styles.todoRow}
+                onPress={() => toggle(it)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: it.done }}
+              >
+                {it.done ? <CircleCheck size={20} color={c.accent} /> : <Circle size={20} color={c.muted} />}
+                <Text style={[styles.todoText, { flex: 1 }, it.done && styles.todoDoneText]}>{it.title}</Text>
+              </Pressable>
+            ))
+          ) : (
+            <Text style={[styles.minutesLabel, styles.emptySection]}>
+              {photoPath ? 'No todos were read from the photo. Try a clearer photo.' : 'Take a photo of the list to fill this in.'}
+            </Text>
+          )}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  )
+}
+
 // Help: a small card per person or pet; tapping one lists what you can do, and
 // picking one tracks it on today's agenda starting now
 function HelpScreen({
@@ -1468,6 +1708,7 @@ function HabitsScreen({
           })}
         </View>
 
+        <TodoListsSection active={active} />
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
@@ -2896,6 +3137,36 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center' },
+  listDivider: { borderBottomWidth: 1, borderBottomColor: c.line },
+  listPhoto: { width: '100%', height: 260, borderRadius: 10, backgroundColor: c.line, marginBottom: 8 },
+  captureRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  captureButton: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: c.accent,
+  },
+  captureButtonQuiet: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: c.accent,
+    backgroundColor: c.card,
+  },
+  buttonQuietDisabled: { opacity: 0.5 },
+  captureQuietText: { fontSize: 16, fontWeight: '600', color: c.accent },
+  readingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 8 },
+  todoDoneText: { textDecorationLine: 'line-through', color: c.muted },
   moreButton: { alignSelf: 'center', marginLeft: 12 },
   moreMenu: { top: 44, right: 12 },
   deleteText: { color: c.now, fontWeight: '600' },
