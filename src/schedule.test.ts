@@ -43,6 +43,7 @@ import {
   anytimeSearchFrom,
   moveToDayStart,
   lastTimes,
+  averageMinutes,
   placeHabits,
   quarterOf,
   relayout,
@@ -323,6 +324,17 @@ test('Last times: the most recent completed runs of a habit, newest first, with 
     { day: '2026-10-03', end: at(23, 5), minutes: 35 },
   ])
   assert.deepEqual(lastTimes([], 5), [])
+})
+
+test('avg: the last 5 completed runs averaged, to the nearest 15 minutes', () => {
+  const run = (day: string, minutes: number, done = true) => ({ day, start: 22, end: 22 + minutes / 60, done })
+  // 44, 45, 45, 60, 40 average 46.8, which rounds to 45
+  const runs = [run('2026-10-05', 44), run('2026-10-04', 45), run('2026-10-03', 45), run('2026-10-02', 60), run('2026-10-01', 40), run('2026-09-30', 120)]
+  assert.equal(averageMinutes(runs, 5), 45)
+  // Unfinished runs don't count, and a short habit never rounds down to 0
+  assert.equal(averageMinutes([run('2026-10-05', 5), run('2026-10-04', 90, false)], 5), 15)
+  assert.equal(averageMinutes([run('2026-10-05', 20), run('2026-10-04', 30)], 5), 30)
+  assert.equal(averageMinutes([], 5), null)
 })
 
 test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {

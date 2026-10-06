@@ -227,6 +227,16 @@ export function lastTimes(runs: { day: string; start: number; end: number; done:
     .map((r) => ({ day: r.day, end: r.end, minutes: Math.round((r.end - r.start) * 60) }))
 }
 
+// Planning's "avg" for a habit's duration: the average length of its last
+// `count` completed runs, to the nearest 15 minutes and never under 15. Null
+// before it's been done.
+export function averageMinutes(runs: { day: string; start: number; end: number; done: boolean }[], count: number) {
+  const recent = lastTimes(runs, count)
+  if (!recent.length) return null
+  const mean = recent.reduce((sum, r) => sum + r.minutes, 0) / recent.length
+  return Math.max(15, Math.round(mean / 15) * 15)
+}
+
 // 0 = Sunday ... 6 = Saturday for a "YYYY-MM-DD" day
 export function weekdayOf(day: string) {
   const [y, m, d] = day.split('-').map(Number)

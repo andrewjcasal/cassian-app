@@ -120,6 +120,7 @@ import {
   anytimeSearchFrom,
   moveToDayStart,
   lastTimes,
+  averageMinutes,
   placeHabits,
   quarterOf,
   relayout,
@@ -2191,6 +2192,11 @@ function HabitHistory({
 }) {
   const [pickingStart, setPickingStart] = useState(false)
   const rows = habitHistory(blocks, today, habit.frequency === 'weekly' ? habit.weekday : null)
+  // Duration: avg sets it to the last 5 runs' average (averageMinutes); the slider
+  // shows where it's going while dragging and saves on release
+  const avg = averageMinutes(blocks.map((b) => ({ ...b, day: b.logical_day })), 5)
+  const [dragMinutes, setDragMinutes] = useState(habit.minutes)
+  useEffect(() => setDragMinutes(habit.minutes), [habit.minutes])
 
   const past = rows.filter((r) => r.status !== 'pending')
   const doneCount = past.filter((r) => r.status === 'done').length
@@ -2240,23 +2246,32 @@ function HabitHistory({
         </>
       ) : null}
       <View style={styles.sliderRow}>
-        <Text style={styles.sliderLabel}>Length</Text>
-        <View style={styles.durations}>
-          {durationOptions(habit.minutes).map((m) => {
-            const active = m === habit.minutes
-            return (
-              <Pressable
-                key={m}
-                style={[styles.duration, active && styles.durationSelected]}
-                onPress={() => !active && onEdit(habit, { minutes: m })}
-                accessibilityLabel={`${m} minutes`}
-                accessibilityState={{ selected: active }}
-              >
-                <Text style={[styles.durationText, active && styles.durationTextSelected]}>{m}</Text>
-              </Pressable>
-            )
-          })}
-        </View>
+        <Text style={styles.sliderLabel}>Duration</Text>
+        <Pressable
+          style={[styles.duration, avg !== null && avg === habit.minutes && styles.durationSelected, avg === null && styles.avgDisabled]}
+          disabled={avg === null}
+          onPress={() => avg !== null && avg !== habit.minutes && onEdit(habit, { minutes: avg })}
+          accessibilityLabel={avg === null ? 'Average, not done yet' : `Use the average of the last 5 times, ${avg} minutes`}
+        >
+          <Text style={[styles.durationText, avg !== null && avg === habit.minutes && styles.durationTextSelected]}>avg</Text>
+        </Pressable>
+        <SteadySlider
+          style={styles.slider}
+          value={dragMinutes}
+          minimumValue={SLIDER_STEP}
+          maximumValue={Math.max(SLIDER_MAX, habit.minutes)}
+          step={SLIDER_STEP}
+          minimumTrackTintColor={c.accent}
+          maximumTrackTintColor={c.line}
+          thumbTintColor={c.accent}
+          onValueChange={(v) => setDragMinutes(Math.round(v))}
+          onSlidingComplete={(v) => {
+            const next = Math.round(v)
+            if (next !== habit.minutes) onEdit(habit, { minutes: next })
+          }}
+          accessibilityLabel="Duration in minutes"
+        />
+        <Text style={[styles.minutesLabel, styles.durationValue]}>{dragMinutes} min</Text>
       </View>
       <View style={styles.sliderRow}>
         <Text style={styles.sliderLabel}>Start</Text>
@@ -3309,6 +3324,8 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  avgDisabled: { opacity: 0.5 },
+  durationValue: { width: 52, textAlign: 'right' },
   lastTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   settingsPage: { flexGrow: 1 },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 8 },
