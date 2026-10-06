@@ -457,9 +457,25 @@ function DayPage() {
     async (current: CalItem[], day: string) => {
       const { data: habits, error } = await supabase
         .from('cass_habits')
-        .select('id,title,minutes,frequency,weekday,start_time,anytime')
+        .select('id,title,minutes,frequency,weekday,start_time,anytime,use_average')
         .order('sort_order')
       if (error) return setError(error.message), false
+      // An avg habit is placed at its last 5 runs' average length
+      const averaged = (habits ?? []).filter((h) => h.use_average)
+      if (averaged.length) {
+        const { data: runs } = await supabase
+          .from('cass_time_blocks')
+          .select('habit_id,day,start_time,end_time,done')
+          .in('habit_id', averaged.map((h) => h.id))
+          .eq('done', true)
+          .is('process_id', null)
+          .order('day', { ascending: false })
+          .limit(200)
+        for (const h of averaged) {
+          const own = (runs ?? []).filter((r) => r.habit_id === h.id).map((r) => ({ ...fromStored(r.day, r.start_time, r.end_time), done: r.done }))
+          h.minutes = averageMinutes(own, 5) ?? h.minutes
+        }
+      }
       const from = habitSearchFrom(day, today, nowHours())
       if (from === null) return false
       // A weekly habit already placed elsewhere this week (Sunday to Saturday) isn't placed again
@@ -1183,6 +1199,8 @@ type Habit = {
   weekday: number | null
   // A set time of day ("23:00:00"), or null to go in the first free gap
   start_time: string | null
+  // Duration set to "avg": it follows the last 5 runs' average (averageMinutes)
+  use_average: boolean
 }
 
 // One of a habit's blocks, with its 6am to 6am day and times
@@ -1692,7 +1710,7 @@ function HabitsScreen({
   useEffect(() => {
     if (!active && habits.length) return
     Promise.all([
-      supabase.from('cass_habits').select('id,title,minutes,frequency,weekday,start_time').order('sort_order'),
+      supabase.from('cass_habits').select('id,title,minutes,frequency,weekday,start_time,use_average').order('sort_order'),
       supabase.from('cass_time_blocks').select('habit_id,day,logical_day,start_time,end_time,done,habit_week').not('habit_id', 'is', null),
       // Skipped until the Help list has loaded (an empty list isn't a valid filter)
       help.length
@@ -1728,7 +1746,7 @@ function HabitsScreen({
     const { data, error } = await supabase
       .from('cass_habits')
       .insert({ ...draft, sort_order: habits.length + 1 })
-      .select('id,title,minutes,frequency,weekday,start_time')
+      .select('id,title,minutes,frequency,weekday,start_time,use_average')
       .single()
     if (error) return setError(error.message)
     setHabits((list) => [...list, data])
@@ -1736,7 +1754,7 @@ function HabitsScreen({
 
   // Saves daily/weekly and the weekday. Unfinished blocks after today are cleared
   // so they get placed again on the right days as those days are opened.
-  type HabitEdit = Partial<Pick<Habit, 'frequency' | 'weekday' | 'minutes' | 'start_time'>>
+  type HabitEdit = Partial<Pick<Habit, 'frequency' | 'weekday' | 'minutes' | 'start_time' | 'use_average'>>
   const editHabit = async (habit: Habit, patch: HabitEdit) => {
     const next = { ...habit, ...patch }
     if (next.frequency === 'daily') next.weekday = null
@@ -1744,7 +1762,7 @@ function HabitsScreen({
     setSelected(next)
     const { error } = await supabase
       .from('cass_habits')
-      .update({ frequency: next.frequency, weekday: next.weekday, minutes: next.minutes, start_time: next.start_time })
+      .update({ frequency: next.frequency, weekday: next.weekday, minutes: next.minutes, start_time: next.start_time, use_average: next.use_average })
       .eq('id', habit.id)
     if (error) return setError(error.message)
     const cleared = await supabase
@@ -1787,7 +1805,11 @@ function HabitsScreen({
                     {h.frequency === 'weekly' ? (
                       <Text style={styles.minutesLabel}>{h.weekday === null ? 'Pick a day' : WEEKDAY_NAMES[h.weekday]}</Text>
                     ) : null}
-                    <Text style={styles.minutesLabel}>{h.minutes} min</Text>
+                    <Text style={styles.minutesLabel}>
+                      {h.use_average
+                        ? `avg · ${averageMinutes((blocksByHabit.get(h.id) ?? []).map((b) => ({ ...b, day: b.logical_day })), 5) ?? h.minutes} min`
+                        : `${h.minutes} min`}
+                    </Text>
                     <ChevronRight size={18} color={c.muted} />
                   </Pressable>
                 ))
@@ -2164,7 +2186,7 @@ function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }
         style={[styles.submitButton, !ready && styles.buttonDisabled]}
         disabled={!ready}
         onPress={() =>
-          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null, start_time: null })
+          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null, start_time: null, use_average: false })
         }
       >
         <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add habit</Text>
@@ -2186,7 +2208,7 @@ function HabitHistory({
   blocks: HabitBlock[]
   today: string
   onSchedule: (habit: Habit, frequency: Habit['frequency'], weekday: number | null) => void
-  onEdit: (habit: Habit, patch: { minutes?: number; start_time?: string | null }) => void
+  onEdit: (habit: Habit, patch: { minutes?: number; start_time?: string | null; use_average?: boolean }) => void
   // Tracked Help events tied to this habit, newest first
   related: { title: string; day: string; start: number; end: number }[]
 }) {
@@ -2248,12 +2270,12 @@ function HabitHistory({
       <View style={styles.sliderRow}>
         <Text style={styles.sliderLabel}>Duration</Text>
         <Pressable
-          style={[styles.duration, avg !== null && avg === habit.minutes && styles.durationSelected, avg === null && styles.avgDisabled]}
+          style={[styles.duration, habit.use_average && styles.durationSelected, avg === null && styles.avgDisabled]}
           disabled={avg === null}
-          onPress={() => avg !== null && avg !== habit.minutes && onEdit(habit, { minutes: avg })}
+          onPress={() => avg !== null && !habit.use_average && onEdit(habit, { minutes: avg, use_average: true })}
           accessibilityLabel={avg === null ? 'Average, not done yet' : `Use the average of the last 5 times, ${avg} minutes`}
         >
-          <Text style={[styles.durationText, avg !== null && avg === habit.minutes && styles.durationTextSelected]}>avg</Text>
+          <Text style={[styles.durationText, habit.use_average && styles.durationTextSelected]}>avg</Text>
         </Pressable>
         <SteadySlider
           style={styles.slider}
@@ -2266,8 +2288,9 @@ function HabitHistory({
           thumbTintColor={c.accent}
           onValueChange={(v) => setDragMinutes(Math.round(v))}
           onSlidingComplete={(v) => {
+            // Dragging sets a fixed length, which takes it off avg
             const next = Math.round(v)
-            if (next !== habit.minutes) onEdit(habit, { minutes: next })
+            if (next !== habit.minutes || habit.use_average) onEdit(habit, { minutes: next, use_average: false })
           }}
           accessibilityLabel="Duration in minutes"
         />
