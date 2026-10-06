@@ -119,6 +119,7 @@ import {
   habitSearchFrom,
   anytimeSearchFrom,
   moveToDayStart,
+  lastTimes,
   placeHabits,
   quarterOf,
   relayout,
@@ -2354,6 +2355,8 @@ function SteadySlider(props: ComponentProps<typeof Slider>) {
 
 // How many days a habit card's Context shows before View all
 const CONTEXT_PREVIEW_DAYS = 3
+// How many completed runs Context's Last times lists
+const LAST_TIMES = 5
 
 // Days of a habit's tied events: each day's heading with when the habit was done
 // the night before, then that day's events
@@ -2442,6 +2445,22 @@ function DetailCard({
     : []
   // The habit's own blocks, for when it was done the night before each day
   const [habitNights, setHabitNights] = useState<{ logical_day: string; done: boolean; done_at: string | null }[]>([])
+  // Last times: the habit's recent completed runs (lastTimes), for every habit
+  const [runs, setRuns] = useState<ReturnType<typeof lastTimes> | null>(null)
+  useEffect(() => {
+    if (!detail.habitId) return
+    supabase
+      .from('cass_time_blocks')
+      .select('day,start_time,end_time,done')
+      .eq('habit_id', detail.habitId)
+      .eq('done', true)
+      .is('process_id', null)
+      .order('day', { ascending: false })
+      .limit(20)
+      .then(({ data }) =>
+        setRuns(lastTimes((data ?? []).map((b) => ({ ...fromStored(b.day, b.start_time, b.end_time), done: b.done })), LAST_TIMES)),
+      )
+  }, [detail.habitId])
   // Loaded when the card opens, so Context is ready the moment it's tapped
   useEffect(() => {
     if (!contextTitles.length) return
@@ -2477,8 +2496,8 @@ function DetailCard({
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
       <View style={styles.modeRow}>
         <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
-        {/* Context only shows for a habit with Help events tied to it */}
-        {contextTitles.length ? (
+        {/* Every habit has Context: its last times, then any Help events tied to it */}
+        {detail.habitId ? (
           <Pressable onPress={() => setShowContext(!showContext)} hitSlop={8} accessibilityState={{ expanded: showContext }}>
             <Text style={styles.modeSwitch}>{showContext ? 'General' : 'Context'}</Text>
           </Pressable>
@@ -2505,9 +2524,23 @@ function DetailCard({
       ) : null}
       {showContext ? (
         <View style={styles.parts}>
-          {!contextTitles.length ? (
-            <Text style={styles.minutesLabel}>No Help events are tied to this habit yet. Link one on Planning.</Text>
-          ) : context && context.length ? (
+          <Text style={styles.sectionLabel}>LAST TIMES</Text>
+          {runs === null ? (
+            <ActivityIndicator size="small" color={c.accent} />
+          ) : runs.length ? (
+            runs.map((r) => (
+              <View key={r.day + r.end} style={styles.lastTimeRow}>
+                <Text style={[styles.todoText, { flex: 1 }]}>{dayLabel(r.day)}</Text>
+                <Text style={styles.minutesLabel}>
+                  ended {clock(r.end)} · {r.minutes} min
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.minutesLabel}>Not done yet.</Text>
+          )}
+          {contextTitles.length ? <Text style={styles.sectionLabel}>HELP EVENTS</Text> : null}
+          {!contextTitles.length ? null : context && context.length ? (
             <>
               <ContextDays days={context.slice(0, CONTEXT_PREVIEW_DAYS)} nights={habitNights} habitTitle={detail.title} />
               {context.length > CONTEXT_PREVIEW_DAYS ? (
@@ -3276,6 +3309,7 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  lastTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   settingsPage: { flexGrow: 1 },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 8 },
   tooltip: { marginHorizontal: 8, marginBottom: 8, padding: 10, borderRadius: 8, backgroundColor: c.block },

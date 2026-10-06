@@ -217,6 +217,16 @@ export function moveToDayStart(items: CalItem[], length: number, day: string, to
   return from === null ? null : freeSlot(items, from, length)
 }
 
+// A habit card's Context, Last times: its most recent completed runs, newest
+// first, each with when it ended and how long it ran.
+export function lastTimes(runs: { day: string; start: number; end: number; done: boolean }[], limit: number) {
+  return runs
+    .filter((r) => r.done)
+    .sort((a, b) => (a.day === b.day ? b.start - a.start : a.day < b.day ? 1 : -1))
+    .slice(0, limit)
+    .map((r) => ({ day: r.day, end: r.end, minutes: Math.round((r.end - r.start) * 60) }))
+}
+
 // 0 = Sunday ... 6 = Saturday for a "YYYY-MM-DD" day
 export function weekdayOf(day: string) {
   const [y, m, d] = day.split('-').map(Number)

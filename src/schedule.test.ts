@@ -42,6 +42,7 @@ import {
   habitSearchFrom,
   anytimeSearchFrom,
   moveToDayStart,
+  lastTimes,
   placeHabits,
   quarterOf,
   relayout,
@@ -308,6 +309,20 @@ test('A set-time habit like Shut down can still be moved by hand with its start 
   const todoPlan = moveTodoStartPlan([{ ...todo('shutdown', at(22, 30), at(23, 15)), fixed: true }], { ...todo('shutdown', at(22, 30), at(23, 15)), fixed: true }, 22)
   if (!('moves' in todoPlan)) throw new Error(todoPlan.error)
   assert.deepEqual(fmt(todoPlan.moves), ['shutdown@22:00-22:45'])
+})
+
+test('Last times: the most recent completed runs of a habit, newest first, with end and length', () => {
+  const runs = [
+    { day: '2026-10-01', start: 22, end: at(22, 40), done: true },
+    { day: '2026-10-03', start: at(22, 30), end: at(23, 5), done: true },
+    { day: '2026-10-02', start: 23, end: at(23, 45), done: false },
+    { day: '2026-10-04', start: at(21, 50), end: at(22, 20), done: true },
+  ]
+  assert.deepEqual(lastTimes(runs, 2), [
+    { day: '2026-10-04', end: at(22, 20), minutes: 30 },
+    { day: '2026-10-03', end: at(23, 5), minutes: 35 },
+  ])
+  assert.deepEqual(lastTimes([], 5), [])
 })
 
 test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {
