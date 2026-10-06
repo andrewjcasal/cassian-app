@@ -24,6 +24,7 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
 import {
+  Archive,
   CalendarDays,
   Camera,
   Check,
@@ -39,6 +40,7 @@ import {
   ListTodo,
   Moon,
   Info,
+  Layers,
   LogOut,
   MoreHorizontal,
   Trash2,
@@ -121,6 +123,7 @@ import {
   moveToDayStart,
   lastTimes,
   averageMinutes,
+  themeRows,
   placeHabits,
   quarterOf,
   relayout,
@@ -273,6 +276,8 @@ type Detail = {
   event: boolean
   // The habit a habit block belongs to, for its Context
   habitId: string | null
+  // The theme a todo is a step of
+  themeId?: string | null
 }
 
 function DayPage() {
@@ -402,6 +407,118 @@ function DayPage() {
       setError(error.message)
     }
   }
+  // Themes (Todos tab): the outcome a set of todos is for. A theme isn't scheduled;
+  // its todos are (theme_id). themeRows orders them, no next step first.
+  const [themes, setThemes] = useState<{ id: string; title: string; sort_order: number }[]>([])
+  const [themeSteps, setThemeSteps] = useState<ThemeStep[]>([])
+  // The theme page open in the Todos tab, if any
+  const [openThemeId, setOpenThemeId] = useState<string | null>(null)
+  const [addingTheme, setAddingTheme] = useState(false)
+  const [themeName, setThemeName] = useState('')
+  const [renamingTheme, setRenamingTheme] = useState(false)
+  const [themeMenu, setThemeMenu] = useState(false)
+  const loadThemes = useCallback(async () => {
+    const [themeRes, stepRes] = await Promise.all([
+      supabase.from('cass_themes').select('id,title,sort_order').is('archived_at', null).order('sort_order'),
+      supabase
+        .from('cass_time_blocks')
+        .select('id,title,day,start_time,end_time,done,theme_id')
+        .not('theme_id', 'is', null)
+        .order('day', { ascending: false })
+        .limit(500),
+    ])
+    const err = themeRes.error ?? stepRes.error
+    if (err) return setError(err.message)
+    setThemes(themeRes.data ?? [])
+    setThemeSteps(
+      (stepRes.data ?? []).map((b) => ({
+        id: b.id,
+        title: b.title,
+        ...fromStored(b.day, b.start_time, b.end_time),
+        done: b.done,
+        themeId: b.theme_id as string,
+      })),
+    )
+  }, [])
+  // Refreshed with every load, so the counts follow saves made anywhere
+  useEffect(() => {
+    loadThemes()
+  }, [loadThemes, byDay])
+  useEffect(() => {
+    setOpenThemeId(null)
+    setThemeMenu(false)
+    setRenamingTheme(false)
+  }, [tab])
+  const themeTitle = (id: string | null | undefined) => (id ? themes.find((t) => t.id === id)?.title : undefined)
+  const openTheme = themes.find((t) => t.id === openThemeId) ?? null
+
+  const addTheme = async () => {
+    const title = themeName.trim()
+    if (!title) return
+    const { error } = await supabase.from('cass_themes').insert({ title, sort_order: themes.length + 1 })
+    if (error) return setError(error.message)
+    setThemeName('')
+    setAddingTheme(false)
+    loadThemes()
+  }
+  const renameTheme = async (id: string, title: string) => {
+    setRenamingTheme(false)
+    if (!title.trim()) return
+    setThemes((list) => list.map((t) => (t.id === id ? { ...t, title: title.trim() } : t)))
+    const { error } = await supabase.from('cass_themes').update({ title: title.trim() }).eq('id', id)
+    if (error) setError(error.message)
+  }
+  const archiveTheme = async (id: string) => {
+    setThemeMenu(false)
+    setOpenThemeId(null)
+    const { error } = await supabase.from('cass_themes').update({ archived_at: new Date().toISOString() }).eq('id', id)
+    if (error) return setError(error.message)
+    loadThemes()
+  }
+  // The card's Theme row
+  const setTodoTheme = async (d: Detail, themeId: string | null) => {
+    setDetail({ ...d, themeId })
+    const { error } = await supabase.from('cass_time_blocks').update({ theme_id: themeId }).eq('id', d.id)
+    if (error) return setError(error.message)
+    await loadDay(d.day)
+  }
+  const newThemeFor = async (d: Detail, title: string) => {
+    const { data, error } = await supabase
+      .from('cass_themes')
+      .insert({ title, sort_order: themes.length + 1 })
+      .select('id')
+      .single()
+    if (error) return setError(error.message)
+    await setTodoTheme(d, data.id)
+  }
+  // ⋯ Make this a theme: the todo keeps its place as the theme's first step, ready to rename
+  const makeTheme = (d: Detail) => newThemeFor(d, d.title)
+  const renameTodo = async (d: Detail, title: string) => {
+    setDetail({ ...d, title })
+    const { error } = await supabase.from('cass_time_blocks').update({ title }).eq('id', d.id)
+    if (error) return setError(error.message)
+    await loadDay(d.day)
+  }
+  // A theme page's "Add a next step": a todo under the theme, placed today from 8am like any new todo
+  const addThemeStep = async (themeId: string, title: string) => {
+    const todayItems = byDay[today]?.items ?? (await fetchDayItems(today))
+    const start = newBlockStart(todayItems, 1, true, nowHours())
+    if (start === null) return setError('No room left today for that step')
+    const { error } = await supabase
+      .from('cass_time_blocks')
+      .insert({ ...toStored(today, start, start + 1), title, kind: 'personal', source: 'app', theme_id: themeId })
+    if (error) return setError(error.message)
+    await loadDay(today)
+  }
+  // Opening a step on another day shows that day behind the card, so its card's moves work
+  const openThemeStep = async (step: ThemeStep) => {
+    if (step.day !== day) {
+      setDay(step.day)
+      await loadDay(step.day)
+    }
+    setDetail({ id: step.id, from: 'todo', title: step.title, day: step.day, start: step.start, end: step.end, done: false, fixed: false, event: false, habitId: null, themeId: step.themeId })
+  }
+
   // Only pull to refresh shows the spinner; every other load happens quietly
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -413,7 +530,7 @@ function DayPage() {
     const next = shiftDay(day, 1)
     const morning = timeOf(DAY_START)
     // cass_habits(start_time) says whether the block's habit has a set time (fixed)
-    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at,process_id,cass_habits(start_time)'
+    const blockCols = 'id,title,day,start_time,end_time,done,habit_id,source,done_at,process_id,theme_id,cass_habits(start_time)'
     const taskCols = 'id,title,day,start_time,end_time,done'
     const [blockRes, lateBlockRes, taskRes, lateTaskRes] = await Promise.all([
       supabase.from('cass_time_blocks').select(blockCols).eq('day', day).gte('start_time', morning),
@@ -440,6 +557,7 @@ function DayPage() {
         doneEarly,
         fixed,
         processId: b.process_id,
+        themeId: b.theme_id,
       }
     })
     const tasks: CalItem[] = [...(taskRes.data ?? []), ...(lateTaskRes.data ?? [])].map((t) => {
@@ -522,7 +640,7 @@ function DayPage() {
       // After habits are placed, so a day's first visit lists them
       const todoRes = await supabase
         .from('cass_time_blocks')
-        .select('id,title,day,start_time,end_time,habit_id,cass_habits(start_time)')
+        .select('id,title,day,start_time,end_time,habit_id,theme_id,cass_habits(start_time)')
         .in('source', ['app', 'habit'])
         .eq('done', false)
         .eq('logical_day', d)
@@ -533,13 +651,13 @@ function DayPage() {
         d === today
           ? await supabase
               .from('cass_time_blocks')
-              .select('id,title,day,start_time,end_time,habit_id,source,cass_habits(frequency)')
+              .select('id,title,day,start_time,end_time,habit_id,source,theme_id,cass_habits(frequency)')
               .in('source', ['app', 'habit'])
               .eq('done', false)
               .lt('logical_day', d)
               .order('day')
               .order('start_time')
-          : { data: [] as { id: string; title: string; day: string; start_time: string; end_time: string | null; habit_id: string | null; source: string; cass_habits: unknown }[], error: null }
+          : { data: [] as { id: string; title: string; day: string; start_time: string; end_time: string | null; habit_id: string | null; source: string; theme_id: string | null; cass_habits: unknown }[], error: null }
       if (overdueRes.error) setError(overdueRes.error.message)
       if (loadRuns.current.get(d) !== run) return
       // Todos, and weekly habits (a missed daily habit just comes back tomorrow)
@@ -547,7 +665,7 @@ function DayPage() {
         .filter((t) => t.source === 'app' || habitFrequency(t.cass_habits) === 'weekly')
         .map((t) => {
           const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
-          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, habitId: t.habit_id }
+          return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, habitId: t.habit_id, themeId: t.theme_id }
         })
       const dayTodos = (todoRes.data ?? []).map((t) => {
         const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
@@ -560,6 +678,7 @@ function DayPage() {
           habit: !!t.habit_id,
           fixed: hasSetTime(t.cass_habits),
           habitId: t.habit_id,
+          themeId: t.theme_id,
         }
       })
       setByDay((prev) => ({ ...prev, [d]: { items: current, todos: dayTodos, overdue: dayOverdue } }))
@@ -936,7 +1055,56 @@ function DayPage() {
       ) : (
       <View style={styles.screenFill} {...(tab === 'agenda' ? daySwipe.panHandlers : {})}>
         {/* Stays put while the agenda or todos scroll underneath */}
-        {tab === 'todos' && allTodos ? (
+        {tab === 'todos' && openTheme ? (
+          // Above the list, so the ⋯ menu that drops below it isn't covered
+          <View style={[styles.header, styles.fixedHeader, { zIndex: 5 }]}>
+            <Pressable
+              onPress={() => {
+                Keyboard.dismiss()
+                setOpenThemeId(null)
+                setThemeMenu(false)
+              }}
+              hitSlop={10}
+              accessibilityLabel="Back"
+              style={[styles.backButton, { width: 64 }]}
+            >
+              <ChevronLeft size={18} color={c.accent} />
+              <Text style={styles.backText}>Back</Text>
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              {renamingTheme ? (
+                <TextInput
+                  style={[styles.title, styles.titleInput]}
+                  defaultValue={openTheme.title}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={(e) => renameTheme(openTheme.id, e.nativeEvent.text)}
+                  onEndEditing={(e) => renameTheme(openTheme.id, e.nativeEvent.text)}
+                />
+              ) : (
+                <Pressable onPress={() => setRenamingTheme(true)} accessibilityHint="Tap to rename">
+                  <Text style={styles.title} numberOfLines={2}>
+                    {openTheme.title}
+                  </Text>
+                  <Text style={styles.subtitle}>Theme</Text>
+                </Pressable>
+              )}
+            </View>
+            <View style={[styles.headerRight, { width: 64, justifyContent: 'flex-end' }]}>
+              <Pressable onPress={() => setThemeMenu(!themeMenu)} hitSlop={10} accessibilityLabel="More" accessibilityState={{ expanded: themeMenu }}>
+                <MoreHorizontal size={20} color={c.ink} />
+              </Pressable>
+            </View>
+            {themeMenu ? (
+              <View style={[styles.menu, styles.themeMenu]}>
+                <Pressable style={[styles.menuItem, styles.menuRow]} onPress={() => archiveTheme(openTheme.id)}>
+                  <Archive size={16} color={c.ink} />
+                  <Text style={styles.menuText}>Archive</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+        ) : tab === 'todos' && allTodos ? (
           <View style={[styles.header, styles.fixedHeader]}>
             <Pressable
               onPress={() => {
@@ -992,7 +1160,16 @@ function DayPage() {
           >
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
-            {tab === 'todos' && !allTodos && overdue.length ? (
+            {tab === 'todos' && openTheme ? (
+              <ThemeSteps
+                key={openTheme.id}
+                steps={themeSteps.filter((st) => st.themeId === openTheme.id)}
+                today={today}
+                onOpen={openThemeStep}
+                onAdd={(title) => addThemeStep(openTheme.id, title)}
+              />
+            ) : null}
+            {tab === 'todos' && !openTheme && !allTodos && overdue.length ? (
               <>
                 <Text style={[styles.sectionLabel, styles.overdueLabel]}>OVERDUE</Text>
                 <View style={[styles.card, styles.overdueCard]}>
@@ -1001,11 +1178,12 @@ function DayPage() {
                       key={t.id}
                       style={styles.todoRow}
                       onPress={() =>
-                        setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: false, event: false, habitId: t.habitId ?? null })
+                        setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: false, event: false, habitId: t.habitId ?? null, themeId: t.themeId ?? null })
                       }
                     >
                       <Text style={[styles.todoText, { flex: 1 }]}>{t.title}</Text>
                       <Text style={styles.minutesLabel}>
+                    {themeTitle(t.themeId) ? `${themeTitle(t.themeId)} · ` : ''}
                     {t.habit ? 'Habit · ' : ''}
                     {dayLabel(t.day)}
                   </Text>
@@ -1015,7 +1193,7 @@ function DayPage() {
                 <Text style={styles.sectionLabel}>TODAY</Text>
               </>
             ) : null}
-            {tab === 'todos' ? (
+            {tab === 'todos' && openTheme ? null : tab === 'todos' ? (
               // With a "View all" row, the list and "Add a todo" are two cards; otherwise one.
               // Only styles change between the two, so the field keeps focus when tapping it
               // opens the full list.
@@ -1028,7 +1206,8 @@ function DayPage() {
                   // A reorder in the preview keeps the rest of the day after it
                   onReorder={(next) => reorder([...next, ...todos.slice(next.length)])}
                   onDragging={setDragging}
-                  onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null })}
+                  themeTitle={themeTitle}
+                  onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null, themeId: t.themeId ?? null })}
                 />
                 {!allTodos && todos.length > TODO_PREVIEW ? (
                   <Pressable style={[styles.viewAllRow, styles.addRowDivider]} onPress={() => setAllTodos(true)} hitSlop={4}>
@@ -1068,11 +1247,52 @@ function DayPage() {
                 items={items}
                 showNow={day === today}
                 onMore={(item, x, y) => setMenu({ item, x, y })}
-                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed, event: item.source === 'event', habitId: item.habitId ?? null })}
+                onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed, event: item.source === 'event', habitId: item.habitId ?? null, themeId: item.themeId ?? null })}
                 onAddAt={setAddAt}
               />
             )}
 
+            {/* Themes sit under the day's todos; no next step comes first (themeRows) */}
+            {tab === 'todos' && !openTheme && !allTodos ? (
+              <>
+                <View style={[styles.sectionHeaderRow, styles.themesHeader]}>
+                  <Text style={[styles.sectionLabel, { flex: 1 }]}>THEMES</Text>
+                  <Pressable style={styles.addButton} onPress={() => setAddingTheme(!addingTheme)} hitSlop={8} accessibilityLabel="Add a theme">
+                    <Plus size={16} color={c.accent} />
+                    <Text style={styles.addButtonText}>Add</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.card}>
+                  {addingTheme ? (
+                    <View style={[styles.addRow, themes.length > 0 && styles.listDivider]}>
+                      <TextInput
+                        style={styles.addInput}
+                        value={themeName}
+                        onChangeText={setThemeName}
+                        placeholder="Theme name"
+                        placeholderTextColor={c.muted}
+                        autoFocus
+                        returnKeyType="done"
+                        onSubmitEditing={addTheme}
+                      />
+                      <Pressable onPress={addTheme} hitSlop={8} accessibilityLabel="Create theme">
+                        <Check size={20} color={c.accent} />
+                      </Pressable>
+                    </View>
+                  ) : null}
+                  {themeRows(themes, themeSteps).map((r) => (
+                    <Pressable key={r.id} style={styles.todoRow} onPress={() => setOpenThemeId(r.id)}>
+                      <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
+                      <Text style={[styles.minutesLabel, !r.next && styles.noNextStep]}>
+                        {r.next ? `${r.open} ${r.open === 1 ? 'todo' : 'todos'} · ${whenLabel(r.next.day, r.next.start, today)}` : 'No next step'}
+                      </Text>
+                      <ChevronRight size={18} color={c.muted} />
+                    </Pressable>
+                  ))}
+                  {!themes.length && !addingTheme ? <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text> : null}
+                </View>
+              </>
+            ) : null}
           </ScrollView>
         </Animated.View>
       </View>
@@ -1136,6 +1356,12 @@ function DayPage() {
               help={help}
               onMoveToDay={moveToDay}
               onDelete={detail.from === 'todo' && !detail.habitId && !detail.event ? deleteTodo : undefined}
+              themes={themes}
+              // Themes are for todos, not habits or events
+              onTheme={!detail.habitId && !detail.event ? setTodoTheme : undefined}
+              onNewTheme={newThemeFor}
+              onMakeTheme={!detail.habitId && !detail.event && !detail.themeId ? makeTheme : undefined}
+              onRename={!detail.habitId && !detail.event ? renameTodo : undefined}
             />
           ) : null}
         </Pressable>
@@ -1351,6 +1577,90 @@ function ScreenHeader({
         <SettingsButton onOpen={onSettings} />
       </View>
     </View>
+  )
+}
+
+type ThemeStep = { id: string; title: string; day: string; start: number; end: number; done: boolean; themeId: string }
+
+// "Today · 2:28pm" or "Thu, Oct 8 · 10am" for a theme's next step
+function whenLabel(day: string, start: number, today: string) {
+  if (day === today) return `Today · ${clock(start)}`
+  const [y, m, d] = day.split('-').map(Number)
+  const date = new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return `${date} · ${clock(start)}`
+}
+
+// A theme's page in the Todos tab: its next steps (tap one for its card), a box
+// to add the next one, and the steps already done, folded away
+function ThemeSteps({
+  steps,
+  today,
+  onOpen,
+  onAdd,
+}: {
+  steps: ThemeStep[]
+  today: string
+  onOpen: (step: ThemeStep) => void
+  onAdd: (title: string) => Promise<void> | void
+}) {
+  const [draft, setDraft] = useState('')
+  const [showDone, setShowDone] = useState(false)
+  const byWhen = (a: ThemeStep, b: ThemeStep) => (a.day === b.day ? a.start - b.start : a.day < b.day ? -1 : 1)
+  const open = steps.filter((st) => !st.done).sort(byWhen)
+  const done = steps.filter((st) => st.done).sort((a, b) => byWhen(b, a))
+  const add = async () => {
+    const title = draft.trim()
+    if (!title) return
+    setDraft('')
+    await onAdd(title)
+  }
+  return (
+    <>
+      <Text style={styles.sectionLabel}>NEXT STEPS</Text>
+      <View style={styles.card}>
+        {open.map((st) => (
+          <Pressable key={st.id} style={styles.todoRow} onPress={() => onOpen(st)}>
+            <Text style={[styles.todoText, { flex: 1 }]}>{st.title}</Text>
+            <Text style={styles.minutesLabel}>{whenLabel(st.day, st.start, today)}</Text>
+            <ChevronRight size={18} color={c.muted} />
+          </Pressable>
+        ))}
+        {!open.length ? <Text style={[styles.minutesLabel, styles.emptySection]}>No next step yet. What's the next thing to do?</Text> : null}
+        <View style={[styles.addRow, styles.addRowDivider]}>
+          <TextInput
+            style={styles.addInput}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Add a next step"
+            placeholderTextColor={c.muted}
+            returnKeyType="done"
+            onSubmitEditing={add}
+          />
+          <Pressable onPress={add} hitSlop={8} accessibilityLabel="Add step">
+            <Plus size={20} color={c.accent} />
+          </Pressable>
+        </View>
+      </View>
+      {done.length ? (
+        <>
+          <Pressable style={styles.sectionHeaderRow} onPress={() => setShowDone(!showDone)} accessibilityState={{ expanded: showDone }}>
+            <Text style={[styles.sectionLabel, { flex: 1 }]}>DONE ({done.length})</Text>
+            {showDone ? <ChevronDown size={16} color={c.muted} /> : <ChevronRight size={16} color={c.muted} />}
+          </Pressable>
+          {showDone ? (
+            <View style={styles.card}>
+              {done.slice(0, 10).map((st) => (
+                <View key={st.id} style={styles.todoRow}>
+                  <CircleCheck size={18} color={c.accent} />
+                  <Text style={[styles.todoText, styles.todoDoneText, { flex: 1 }]}>{st.title}</Text>
+                  <Text style={styles.minutesLabel}>{whenLabel(st.day, st.start, today)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </>
+      ) : null}
+    </>
   )
 }
 
@@ -2455,6 +2765,11 @@ function DetailCard({
   help,
   onMoveToDay,
   onDelete,
+  themes,
+  onTheme,
+  onNewTheme,
+  onMakeTheme,
+  onRename,
 }: {
   detail: Detail
   today: string
@@ -2470,9 +2785,29 @@ function DetailCard({
   onMoveToDay: (detail: Detail, day: string) => void
   // The ⋯ menu's Delete; left out where deleting wouldn't stick (habits come back)
   onDelete?: (detail: Detail) => void
+  // Theme row (todos only, not habits or events): pick one, make a new one, or none
+  themes: { id: string; title: string }[]
+  onTheme?: (detail: Detail, themeId: string | null) => void
+  onNewTheme?: (detail: Detail, title: string) => void
+  // ⋯ Make this a theme: a theme named after this todo, which stays as its first step
+  onMakeTheme?: (detail: Detail) => void
+  // Tapping the title renames a todo
+  onRename?: (detail: Detail, title: string) => void
 }) {
   const [pickingDate, setPickingDate] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [titleDraft, setTitleDraft] = useState(detail.title)
+  useEffect(() => setTitleDraft(detail.title), [detail.title])
+  const [pickingTheme, setPickingTheme] = useState(false)
+  const [newTheme, setNewTheme] = useState<string | null>(null)
+  const themeName = themes.find((t) => t.id === detail.themeId)?.title
+  const saveTitle = () => {
+    setRenaming(false)
+    const next = titleDraft.trim()
+    if (next && next !== detail.title) onRename?.(detail, next)
+    else setTitleDraft(detail.title)
+  }
   // Context: the Help events tied to this habit, day by day
   const [showContext, setShowContext] = useState(false)
   // The full page of every day, opened from View all
@@ -2533,14 +2868,30 @@ function DetailCard({
     // Claims taps on the card so only the backdrop closes it
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
       <View style={styles.modeRow}>
-        <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
+        {renaming ? (
+          <TextInput
+            style={[styles.detailTitle, styles.modeHalf, styles.titleInput]}
+            value={titleDraft}
+            onChangeText={setTitleDraft}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={saveTitle}
+            onBlur={saveTitle}
+          />
+        ) : onRename ? (
+          <Pressable style={styles.modeHalf} onPress={() => setRenaming(true)} accessibilityHint="Tap to rename">
+            <Text style={styles.detailTitle}>{detail.title}</Text>
+          </Pressable>
+        ) : (
+          <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
+        )}
         {/* Every habit has Context: its last times, then any Help events tied to it */}
         {detail.habitId ? (
           <Pressable onPress={() => setShowContext(!showContext)} hitSlop={8} accessibilityState={{ expanded: showContext }}>
             <Text style={styles.modeSwitch}>{showContext ? 'General' : 'Context'}</Text>
           </Pressable>
         ) : null}
-        {onDelete ? (
+        {onDelete || onMakeTheme ? (
           <Pressable
             style={styles.moreButton}
             onPress={() => setMoreOpen(!moreOpen)}
@@ -2552,12 +2903,26 @@ function DetailCard({
           </Pressable>
         ) : null}
       </View>
-      {moreOpen && onDelete ? (
+      {moreOpen && (onDelete || onMakeTheme) ? (
         <View style={[styles.menu, styles.moreMenu]}>
-          <Pressable style={[styles.menuItem, styles.menuRow]} onPress={() => onDelete(detail)}>
-            <Trash2 size={16} color={c.now} />
-            <Text style={[styles.menuText, styles.deleteText]}>Delete</Text>
-          </Pressable>
+          {onMakeTheme ? (
+            <Pressable
+              style={[styles.menuItem, styles.menuRow]}
+              onPress={() => {
+                setMoreOpen(false)
+                onMakeTheme(detail)
+              }}
+            >
+              <Layers size={16} color={c.ink} />
+              <Text style={styles.menuText}>Make this a theme</Text>
+            </Pressable>
+          ) : null}
+          {onDelete ? (
+            <Pressable style={[styles.menuItem, styles.menuRow]} onPress={() => onDelete(detail)}>
+              <Trash2 size={16} color={c.now} />
+              <Text style={[styles.menuText, styles.deleteText]}>Delete</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
       {showContext ? (
@@ -2652,6 +3017,79 @@ function DetailCard({
     ) : null}
   </>
 ) : null}
+          {onTheme ? (
+            <>
+              <View style={styles.sliderRow}>
+                <Text style={styles.sliderLabel}>Theme</Text>
+                <Pressable
+                  style={[styles.themeChip, themeName ? styles.themeChipSet : null]}
+                  onPress={() => setPickingTheme(!pickingTheme)}
+                  accessibilityState={{ expanded: pickingTheme }}
+                  accessibilityLabel={themeName ? `Theme: ${themeName}. Change it` : 'Pick a theme'}
+                >
+                  <Text style={[styles.themeChipText, themeName ? styles.themeChipTextSet : null]} numberOfLines={1}>
+                    {themeName ?? 'None'}
+                  </Text>
+                  <ChevronDown size={14} color={themeName ? c.accent : c.muted} />
+                </Pressable>
+              </View>
+              {pickingTheme ? (
+                <View style={styles.themePicker}>
+                  {themes.map((t) => (
+                    <Pressable
+                      key={t.id}
+                      style={styles.themePickerRow}
+                      onPress={() => {
+                        setPickingTheme(false)
+                        if (t.id !== detail.themeId) onTheme(detail, t.id)
+                      }}
+                    >
+                      <Text style={[styles.menuText, { flex: 1 }]} numberOfLines={1}>
+                        {t.title}
+                      </Text>
+                      {t.id === detail.themeId ? <Check size={16} color={c.accent} /> : null}
+                    </Pressable>
+                  ))}
+                  {newTheme === null ? (
+                    <Pressable style={styles.themePickerRow} onPress={() => setNewTheme('')}>
+                      <Plus size={16} color={c.accent} />
+                      <Text style={[styles.menuText, { color: c.accent }]}>New theme…</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={styles.themePickerRow}>
+                      <TextInput
+                        style={[styles.addInput, { flex: 1 }]}
+                        value={newTheme}
+                        onChangeText={setNewTheme}
+                        placeholder="Theme name"
+                        placeholderTextColor={c.muted}
+                        autoFocus
+                        returnKeyType="done"
+                        onSubmitEditing={() => {
+                          if (!newTheme.trim()) return
+                          onNewTheme?.(detail, newTheme.trim())
+                          setNewTheme(null)
+                          setPickingTheme(false)
+                        }}
+                      />
+                    </View>
+                  )}
+                  {detail.themeId ? (
+                    <Pressable
+                      style={styles.themePickerRow}
+                      onPress={() => {
+                        setPickingTheme(false)
+                        onTheme(detail, null)
+                      }}
+                    >
+                      <Text style={[styles.menuText, { color: c.muted }]}>None</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
           {/* Every block's start is yours to move, a set-time habit like Shut down
               included; the automatic rules still leave set-time habits where they are */}
           <View style={styles.sliderRow}>
@@ -2955,6 +3393,7 @@ function TodoList({
   onReorder,
   onDragging,
   onOpen,
+  themeTitle,
 }: {
   todos: Todo[]
   today: string
@@ -2962,6 +3401,8 @@ function TodoList({
   onReorder: (next: Todo[]) => void
   onDragging: (dragging: boolean) => void
   onOpen: (todo: Todo) => void
+  // A todo's theme, shown first in its grey line
+  themeTitle: (themeId: string | null | undefined) => string | undefined
 }) {
   const [drag, setDrag] = useState<{ id: string; from: number; to: number } | null>(null)
   const dy = useRef(new Animated.Value(0)).current
@@ -3060,6 +3501,7 @@ function TodoList({
               today={today}
               onMinutes={(m) => onMinutes(t, m)}
               onOpen={() => onOpen(t)}
+              theme={themeTitle(t.themeId)}
               handle={responderFor(t.id).panHandlers}
             />
           </Animated.View>
@@ -3074,12 +3516,14 @@ function TodoRow({
   today,
   onMinutes,
   onOpen,
+  theme,
   handle,
 }: {
   todo: Todo
   today: string
   onMinutes: (minutes: number) => Promise<void> | void
   onOpen: () => void
+  theme?: string
   handle: PanResponderInstance['panHandlers']
 }) {
   const minutes = Math.round((todo.end - todo.start) * 60)
@@ -3109,6 +3553,7 @@ function TodoRow({
       <Pressable style={{ flex: 1 }} onPress={onOpen}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
+          {theme ? `${theme} · ` : ''}
           {todo.habit ? 'Habit · ' : ''}
           {todo.day === today ? '' : `${dayLabel(todo.day)} · `}
           {clock(todo.start)}
@@ -3347,6 +3792,26 @@ const styles = StyleSheet.create({
   contextHeader: { flexDirection: 'row', alignItems: 'center' },
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
+  themesHeader: { marginTop: 12 },
+  noNextStep: { color: c.accent, fontWeight: '600' },
+  themeMenu: { top: 48, right: 12 },
+  titleInput: { borderBottomWidth: 1, borderBottomColor: c.accent, paddingVertical: 2 },
+  themeChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: c.line,
+  },
+  themeChipSet: { borderColor: c.accent, backgroundColor: c.block },
+  themeChipText: { flex: 1, fontSize: 15, color: c.muted },
+  themeChipTextSet: { color: c.ink, fontWeight: '600' },
+  themePicker: { borderWidth: 1, borderColor: c.line, borderRadius: 8, marginLeft: 72 },
+  themePickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   avgDisabled: { opacity: 0.5 },
   durationValue: { width: 52, textAlign: 'right' },
   lastTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },

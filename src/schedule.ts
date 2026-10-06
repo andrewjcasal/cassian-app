@@ -18,6 +18,8 @@ export type CalItem = {
   fixed?: boolean
   // A routine step recorded under its parent block (Shut down); kept off the grid
   processId?: string | null
+  // The theme a todo is a step of (cass_themes)
+  themeId?: string | null
 }
 
 export type Todo = {
@@ -29,6 +31,7 @@ export type Todo = {
   habit: boolean
   fixed?: boolean
   habitId?: string | null
+  themeId?: string | null
 }
 
 export type Status = 'done' | 'not_started' | 'follow_up' | 'start_now'
@@ -235,6 +238,26 @@ export function averageMinutes(runs: { day: string; start: number; end: number; 
   if (!recent.length) return null
   const mean = recent.reduce((sum, r) => sum + r.minutes, 0) / recent.length
   return Math.max(15, Math.round(mean / 15) * 15)
+}
+
+// The Todos tab's Themes: each theme with how many unfinished todos it has and
+// when the next one is. Themes with no next step come first, since those are the
+// ones to update; the rest go by their next todo, soonest first.
+export function themeRows(
+  themes: { id: string; title: string; sort_order: number }[],
+  steps: { themeId: string | null; day: string; start: number; done: boolean }[],
+) {
+  const rows = themes.map((t) => {
+    const open = steps
+      .filter((s) => s.themeId === t.id && !s.done)
+      .sort((a, b) => (a.day === b.day ? a.start - b.start : a.day < b.day ? -1 : 1))
+    return { id: t.id, title: t.title, open: open.length, next: open.length ? { day: open[0].day, start: open[0].start } : null, order: t.sort_order }
+  })
+  rows.sort((a, b) => {
+    if (!a.next || !b.next) return a.next === b.next ? a.order - b.order : a.next ? 1 : -1
+    return a.next.day === b.next.day ? a.next.start - b.next.start : a.next.day < b.next.day ? -1 : 1
+  })
+  return rows.map(({ order: _order, ...r }) => r)
 }
 
 // 0 = Sunday ... 6 = Saturday for a "YYYY-MM-DD" day

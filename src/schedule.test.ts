@@ -44,6 +44,7 @@ import {
   moveToDayStart,
   lastTimes,
   averageMinutes,
+  themeRows,
   placeHabits,
   quarterOf,
   relayout,
@@ -335,6 +336,25 @@ test('avg: the last 5 completed runs averaged, to the nearest 15 minutes', () =>
   assert.equal(averageMinutes([run('2026-10-05', 5), run('2026-10-04', 90, false)], 5), 15)
   assert.equal(averageMinutes([run('2026-10-05', 20), run('2026-10-04', 30)], 5), 30)
   assert.equal(averageMinutes([], 5), null)
+})
+
+test('Themes: each shows its open todos and the next one, and themes with no next step come first', () => {
+  const themes = [
+    { id: 'gift', title: 'Gift for Ollie', sort_order: 1 },
+    { id: 'cable', title: 'Cable organizing for the office', sort_order: 2 },
+    { id: 'net', title: 'Networking', sort_order: 3 },
+  ]
+  const steps = [
+    { themeId: 'net', day: '2026-10-08', start: 10, done: false },
+    { themeId: 'net', day: '2026-10-06', start: 16, done: false },
+    { themeId: 'gift', day: '2026-10-09', start: 9, done: false },
+    { themeId: 'cable', day: '2026-10-05', start: 9, done: true },
+  ]
+  assert.deepEqual(themeRows(themes, steps), [
+    { id: 'cable', title: 'Cable organizing for the office', open: 0, next: null },
+    { id: 'net', title: 'Networking', open: 2, next: { day: '2026-10-06', start: 16 } },
+    { id: 'gift', title: 'Gift for Ollie', open: 1, next: { day: '2026-10-09', start: 9 } },
+  ])
 })
 
 test('placeHabits puts a set-time habit at its time first, and the rest fill gaps around it', () => {
