@@ -1075,7 +1075,8 @@ function DayPage() {
         {/* Stays put while the agenda or todos scroll underneath */}
         {tab === 'todos' && openTheme ? (
           // Above the list, so the ⋯ menu that drops below it isn't covered
-          <View style={[styles.header, styles.fixedHeader, { zIndex: 5 }]}>
+          <View style={{ zIndex: 5 }}>
+            <View style={[styles.header, styles.fixedHeader, { zIndex: 5 }]}>
             <Pressable
               onPress={() => {
                 Keyboard.dismiss()
@@ -1089,25 +1090,7 @@ function DayPage() {
               <ChevronLeft size={18} color={c.accent} />
               <Text style={styles.backText}>Back</Text>
             </Pressable>
-            <View style={{ flex: 1 }}>
-              {renamingTheme ? (
-                <TextInput
-                  style={[styles.title, styles.titleInput]}
-                  defaultValue={openTheme.title}
-                  autoFocus
-                  returnKeyType="done"
-                  onSubmitEditing={(e) => renameTheme(openTheme.id, e.nativeEvent.text)}
-                  onEndEditing={(e) => renameTheme(openTheme.id, e.nativeEvent.text)}
-                />
-              ) : (
-                <Pressable onPress={() => setRenamingTheme(true)} accessibilityHint="Tap to rename">
-                  <Text style={styles.title} numberOfLines={2}>
-                    {openTheme.title}
-                  </Text>
-                  <Text style={styles.subtitle}>Theme</Text>
-                </Pressable>
-              )}
-            </View>
+            <Text style={[styles.title, { flex: 1 }]}>Theme</Text>
             <View style={[styles.headerRight, { width: 64, justifyContent: 'flex-end' }]}>
               <Pressable onPress={() => setThemeMenu(!themeMenu)} hitSlop={10} accessibilityLabel="More" accessibilityState={{ expanded: themeMenu }}>
                 <MoreHorizontal size={20} color={c.ink} />
@@ -1121,6 +1104,26 @@ function DayPage() {
                 </Pressable>
               </View>
             ) : null}
+            </View>
+            {/* The theme's name, its own bar under the header; tap to rename */}
+            <View style={styles.themeNameBar}>
+              {renamingTheme ? (
+                <TextInput
+                  style={[styles.themeNameText, styles.titleInput]}
+                  defaultValue={openTheme.title}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={(e) => renameTheme(openTheme.id, e.nativeEvent.text)}
+                  onEndEditing={(e) => renameTheme(openTheme.id, e.nativeEvent.text)}
+                />
+              ) : (
+                <Pressable onPress={() => setRenamingTheme(true)} accessibilityHint="Tap to rename">
+                  <Text style={styles.themeNameText} numberOfLines={2}>
+                    {openTheme.title}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         ) : tab === 'todos' && allTodos ? (
           <View style={[styles.header, styles.fixedHeader]}>
@@ -3734,6 +3737,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: c.line,
   },
+  themeNameBar: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: c.card,
+    borderBottomWidth: 1,
+    borderBottomColor: c.line,
+  },
+  themeNameText: { fontSize: 20, fontWeight: '600', color: c.theme },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
   subtitle: { fontSize: 14, color: c.muted, textAlign: 'center' },
