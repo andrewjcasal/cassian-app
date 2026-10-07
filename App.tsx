@@ -1622,7 +1622,8 @@ function ThemeSteps({
   onAdd: (title: string) => Promise<void> | void
 }) {
   const [draft, setDraft] = useState('')
-  const [showDone, setShowDone] = useState(false)
+  // Open by default; the header still folds it
+  const [showDone, setShowDone] = useState(true)
   const byWhen = (a: ThemeStep, b: ThemeStep) => (a.day === b.day ? a.start - b.start : a.day < b.day ? -1 : 1)
   const open = steps.filter((st) => !st.done).sort(byWhen)
   const done = steps.filter((st) => st.done).sort((a, b) => byWhen(b, a))
