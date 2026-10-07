@@ -953,24 +953,25 @@ test('lastDays: the n days ending today, oldest first', () => {
   assert.deepEqual(lastDays('2026-10-01', 2), ['2026-09-30', '2026-10-01'])
 })
 
-test('shutdownTimes: when the routine started, else the block if done as scheduled, else nothing', () => {
+test('shutdownTimes: when the routine last step ended, else the block end if done, else nothing', () => {
   const blocks = [
-    { id: 'a', day: '2026-10-03', start: 23, done: true },
-    { id: 'b', day: '2026-10-04', start: 23, done: true },
-    { id: 'c', day: '2026-10-05', start: 23, done: true },
-    { id: 'd', day: '2026-10-06', start: 22.5, done: false },
+    { id: 'a', day: '2026-10-03', end: 23.75, done: true },
+    { id: 'b', day: '2026-10-04', end: 23.75, done: true },
+    // Done now at 12:30am: the block ends then
+    { id: 'c', day: '2026-10-05', end: 24.5, done: true },
+    { id: 'd', day: '2026-10-06', end: 23.25, done: false },
   ]
   const steps = [
-    { processId: 'a', start: 22.65 },
-    { processId: 'a', start: 22.9 },
-    // Started after midnight: still that night, so past 24
-    { processId: 'b', start: 24.25 },
+    { processId: 'a', end: 22.75 },
+    { processId: 'a', end: 23.0167 },
+    // Ended after midnight: still that night, so past 24
+    { processId: 'b', end: 24.25 },
   ]
   assert.deepEqual(shutdownTimes(['2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06'], blocks, steps), [
     { day: '2026-10-02', hours: null },
-    { day: '2026-10-03', hours: 22.65 },
+    { day: '2026-10-03', hours: 23.0167 },
     { day: '2026-10-04', hours: 24.25 },
-    { day: '2026-10-05', hours: 23 },
+    { day: '2026-10-05', hours: 24.5 },
     { day: '2026-10-06', hours: null },
   ])
 })

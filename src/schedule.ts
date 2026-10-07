@@ -776,20 +776,20 @@ export function lastDays(today: string, n: number) {
   return Array.from({ length: n }, (_, i) => shiftDay(today, i - (n - 1)))
 }
 
-// Reflect's Shut down chart: for each day, when Shut down actually started. That's
-// the first routine step recorded under its block; a block marked done with no
-// steps counts at its own start; a day not shut down yet has nothing. Hours are
-// the day's own (past 24 is after midnight), as fromStored returns them.
+// Reflect's Shut down chart: for each day, when Shut down ended. With the routine
+// timer, that's when its last step ended; otherwise, a block marked done (Done now
+// ends it at the tap) counts at its own end; a day not shut down yet has nothing.
+// Hours are the day's own (past 24 is after midnight), as fromStored returns them.
 export function shutdownTimes(
   days: string[],
-  blocks: { id: string; day: string; start: number; done: boolean }[],
-  steps: { processId: string; start: number }[],
+  blocks: { id: string; day: string; end: number; done: boolean }[],
+  steps: { processId: string; end: number }[],
 ) {
   return days.map((day) => {
     const block = blocks.find((b) => b.day === day)
     if (!block) return { day, hours: null }
-    const starts = steps.filter((st) => st.processId === block.id).map((st) => st.start)
-    if (starts.length) return { day, hours: Math.min(...starts) }
-    return { day, hours: block.done ? block.start : null }
+    const ends = steps.filter((st) => st.processId === block.id).map((st) => st.end)
+    if (ends.length) return { day, hours: Math.max(...ends) }
+    return { day, hours: block.done ? block.end : null }
   })
 }

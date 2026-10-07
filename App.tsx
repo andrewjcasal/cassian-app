@@ -2039,7 +2039,7 @@ const CHART_HEIGHT = 180
 // Room for the time labels on the left and the day labels underneath
 const CHART_PAD = { left: 52, right: 12, top: 12, bottom: 24 }
 
-// The Reflect tab: how the last week went. First up, when Shut down started each night.
+// The Reflect tab: how the last week went. First up, when Shut down ended each night.
 function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: { x: number; y: number }) => void }) {
   const [points, setPoints] = useState<{ day: string; hours: number | null }[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -2071,7 +2071,7 @@ function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: 
         shutdownTimes(
           days,
           blocks.map((b) => ({ id: b.id, done: b.done, ...fromStored(b.day, b.start_time, b.end_time) })),
-          (stepRes.data ?? []).map((st) => ({ processId: st.process_id as string, start: fromStored(st.day, st.start_time, st.end_time).start })),
+          (stepRes.data ?? []).map((st) => ({ processId: st.process_id as string, end: fromStored(st.day, st.start_time, st.end_time).end })),
         ),
       )
     })()
@@ -2106,7 +2106,7 @@ function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: 
     <ScrollView contentContainerStyle={styles.page}>
       <ScreenHeader title="Reflect" onSettings={onSettings} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Text style={styles.sectionLabel}>SHUT DOWN · LAST 7 NIGHTS</Text>
+      <Text style={styles.sectionLabel}>SHUT DOWN ENDED · LAST 7 NIGHTS</Text>
       <View style={[styles.card, styles.chartCard]} onLayout={(e) => setWidth(e.nativeEvent.layout.width - 8)}>
         {points === null ? (
           <ActivityIndicator style={styles.emptySection} size="small" color={c.accent} />
