@@ -1697,7 +1697,8 @@ type TodoListItem = { id: string; title: string; done: boolean }
 // Planning's Todo Lists: paper lists captured as a photo, each with the todos
 // read off it (transcribe-todo-list). Tapping one opens its page.
 function TodoListsSection({ active }: { active: boolean }) {
-  const [lists, setLists] = useState<TodoList[]>([])
+  // null until the first load, so it never reads "None yet" before the server answers
+  const [lists, setLists] = useState<TodoList[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
@@ -1717,6 +1718,10 @@ function TodoListsSection({ active }: { active: boolean }) {
       })),
     )
   }, [])
+  // Loaded on mount, while Planning is still hidden, then refreshed each time it opens
+  useEffect(() => {
+    load()
+  }, [load])
   useEffect(() => {
     if (active) load()
   }, [active, load])
@@ -1744,7 +1749,7 @@ function TodoListsSection({ active }: { active: boolean }) {
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.card}>
         {adding ? (
-          <View style={[styles.addRow, lists.length > 0 && styles.listDivider]}>
+          <View style={[styles.addRow, !!lists?.length && styles.listDivider]}>
             <TextInput
               style={styles.addInput}
               value={name}
@@ -1760,7 +1765,8 @@ function TodoListsSection({ active }: { active: boolean }) {
             </Pressable>
           </View>
         ) : null}
-        {lists.map((l) => (
+        {lists === null ? <ActivityIndicator style={styles.emptySection} size="small" color={c.accent} /> : null}
+        {(lists ?? []).map((l) => (
           <Pressable key={l.id} style={styles.todoRow} onPress={() => setOpen(l)}>
             <Text style={[styles.todoText, { flex: 1 }]}>{l.title}</Text>
             <Text style={styles.minutesLabel}>
@@ -1769,7 +1775,7 @@ function TodoListsSection({ active }: { active: boolean }) {
             <ChevronRight size={18} color={c.muted} />
           </Pressable>
         ))}
-        {!lists.length && !adding ? <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text> : null}
+        {lists?.length === 0 && !adding ? <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text> : null}
       </View>
 
       <Modal visible={open !== null} animationType="slide" onRequestClose={() => setOpen(null)}>
@@ -2187,8 +2193,8 @@ function HabitsScreen({
           </View>
         ))}
 
-        {showHabits ? null : (
-          <>
+        {/* Hidden, not unmounted, on the Habits page so Todo Lists keeps what it loaded */}
+        <View style={showHabits ? styles.hidden : null}>
           <Text style={styles.sectionLabel}>HELP EVENTS</Text>
           <View style={styles.card}>
             {help.map((h) => {
@@ -2246,8 +2252,7 @@ function HabitsScreen({
           </View>
 
           <TodoListsSection active={active} />
-          </>
-        )}
+        </View>
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
