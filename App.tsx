@@ -130,6 +130,7 @@ import {
   averageMinutes,
   themeRows,
   lastDays,
+  shortDay,
   shutdownTimes,
   placeHabits,
   quarterOf,
@@ -1371,6 +1372,8 @@ function DayPage() {
       </Modal>
 
       <Modal visible={detail !== null} transparent animationType="none" onRequestClose={() => setDetail(null)}>
+        {/* Lifts the card above the keyboard while its Note is being typed */}
+        <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Pressable style={styles.detailBackdrop} onPress={() => setDetail(null)}>
           {detail ? (
             <DetailCard
@@ -1398,6 +1401,7 @@ function DayPage() {
             />
           ) : null}
         </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal visible={routine !== null} animationType="slide" onRequestClose={() => setRoutine(null)}>
@@ -2042,6 +2046,8 @@ const CHART_PAD = { left: 52, right: 12, top: 12, bottom: 24 }
 // The Reflect tab: how the last week went. First up, when Shut down ended each night.
 function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: { x: number; y: number }) => void }) {
   const [points, setPoints] = useState<{ day: string; hours: number | null }[] | null>(null)
+  // Each night's Shut down note, from its card's Note field
+  const [notes, setNotes] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [width, setWidth] = useState(0)
 
@@ -2053,7 +2059,7 @@ function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: 
       if (!habit.data) return setPoints(days.map((day) => ({ day, hours: null })))
       const blockRes = await supabase
         .from('cass_time_blocks')
-        .select('id,day,start_time,end_time,done,logical_day')
+        .select('id,day,start_time,end_time,done,logical_day,note')
         .eq('habit_id', habit.data.id)
         .gte('logical_day', days[0])
         .lte('logical_day', today)
@@ -2067,6 +2073,7 @@ function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: 
         : { data: [], error: null }
       if (stepRes.error) return setError(stepRes.error.message)
       setError(null)
+      setNotes(Object.fromEntries(blocks.filter((b) => b.note).map((b) => [b.logical_day, b.note as string])))
       setPoints(
         shutdownTimes(
           days,
@@ -2165,9 +2172,10 @@ function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: 
       {points ? (
         <View style={styles.card}>
           {[...points].reverse().map((p) => (
-            <View key={p.day} style={styles.lastTimeRow}>
-              <Text style={[styles.todoText, { flex: 1 }]}>{dayLabel(p.day)}</Text>
-              <Text style={styles.minutesLabel}>{p.hours === null ? 'Not shut down' : clock(p.hours)}</Text>
+            <View key={p.day} style={[styles.lastTimeRow, styles.reflectRow]}>
+              <Text style={[styles.todoText, styles.reflectDay]}>{shortDay(p.day)}</Text>
+              <Text style={[styles.minutesLabel, styles.reflectTime]}>{p.hours === null ? '-' : clock(p.hours)}</Text>
+              <Text style={[styles.minutesLabel, styles.reflectNote]}>{notes[p.day] ?? ''}</Text>
             </View>
           ))}
         </View>
@@ -3031,6 +3039,31 @@ function DetailCard({
   useEffect(() => setTitleDraft(detail.title), [detail.title])
   const [pickingTheme, setPickingTheme] = useState(false)
   const [pickerTop, setPickerTop] = useState(46)
+  // The block's note: null while it loads, saved when the field loses focus
+  const [note, setNote] = useState<string | null>(null)
+  const savedNote = useRef('')
+  useEffect(() => {
+    supabase
+      .from('cass_time_blocks')
+      .select('note')
+      .eq('id', detail.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        savedNote.current = data?.note ?? ''
+        setNote(savedNote.current)
+      })
+  }, [detail.id])
+  const noteNow = useRef(note)
+  noteNow.current = note
+  const saveNote = () => {
+    const current = noteNow.current
+    const next = (current ?? '').trim()
+    if (current === null || next === savedNote.current) return
+    savedNote.current = next
+    supabase.from('cass_time_blocks').update({ note: next || null }).eq('id', detail.id).then()
+  }
+  // Closing the card by tapping outside it doesn't always blur the field first
+  useEffect(() => () => saveNote(), [detail.id])
   const themeName = themes.find((t) => t.id === detail.themeId)?.title
   // Blur and the checkmark can both fire for one save
   const savingTitle = useRef(false)
@@ -3380,6 +3413,21 @@ function DetailCard({
             </View>
             </>
           )}
+
+          {/* Shows done or not; Reflect lists Shut down's beside each night */}
+          <View style={[styles.sliderRow, styles.noteRow]}>
+            <Text style={styles.sliderLabel}>Note</Text>
+            <TextInput
+              style={[styles.addInput, styles.noteInput]}
+              value={note ?? ''}
+              onChangeText={setNote}
+              onBlur={saveNote}
+              placeholder={note === null ? 'Loading…' : 'Add a note'}
+              placeholderTextColor={c.muted}
+              editable={note !== null}
+              multiline
+            />
+          </View>
 
           {routineSteps.length ? (
             <View style={styles.stepCards}>
@@ -4097,6 +4145,13 @@ const styles = StyleSheet.create({
   themePickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   avgDisabled: { opacity: 0.5 },
   durationValue: { width: 52, textAlign: 'right' },
+  noteRow: { alignItems: 'flex-start' },
+  noteInput: { flex: 1, minHeight: 40, textAlignVertical: 'top', borderWidth: 1, borderColor: c.line, borderRadius: 6, paddingHorizontal: 8, paddingTop: 8 },
+  // Reflect's list: day, time, then the note taking the rest
+  reflectRow: { alignItems: 'flex-start', paddingHorizontal: 8, paddingVertical: 6 },
+  reflectDay: { width: 64 },
+  reflectTime: { width: 64, paddingTop: 2 },
+  reflectNote: { flex: 1, paddingTop: 2, color: c.ink },
   lastTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   settingsPage: { flexGrow: 1 },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 8 },

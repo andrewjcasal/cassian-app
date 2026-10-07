@@ -793,3 +793,9 @@ export function shutdownTimes(
     return { day, hours: block.done ? block.end : null }
   })
 }
+
+// Reflect's list: "T 10/6", the weekday's first letter then month/day
+export function shortDay(day: string) {
+  const [y, m, d] = day.split('-').map(Number)
+  return `${'SMTWTFS'[new Date(y, m - 1, d).getDay()]} ${m}/${d}`
+}

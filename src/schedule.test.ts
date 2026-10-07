@@ -13,6 +13,7 @@ import {
   durationOptions,
   fromStored,
   lastDays,
+  shortDay,
   shutdownTimes,
   logicalNow,
   toStored,
@@ -982,4 +983,10 @@ test('doneNowPlan: Done now after midnight ends the block now, keeping its lengt
   assert.equal(plan.start, 23.75)
   assert.equal(plan.end, 24.5)
   assert.deepEqual(plan.moves, [])
+})
+
+test('shortDay: one letter for the weekday, then month/day', () => {
+  assert.equal(shortDay('2026-10-06'), 'T 10/6')
+  assert.equal(shortDay('2026-10-04'), 'S 10/4')
+  assert.equal(shortDay('2026-01-15'), 'T 1/15')
 })
