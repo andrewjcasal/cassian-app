@@ -482,17 +482,18 @@ function DayPage() {
     if (error) return setError(error.message)
     await loadDay(d.day)
   }
-  const newThemeFor = async (d: Detail, title: string) => {
+  // Convert to theme: a theme named after the todo, which stays as its first step.
+  // The card then shows the theme above the title and opens the title to rename
+  const makeTheme = async (d: Detail) => {
     const { data, error } = await supabase
       .from('cass_themes')
-      .insert({ title, sort_order: themes.length + 1 })
-      .select('id')
+      .insert({ title: d.title, sort_order: themes.length + 1 })
+      .select('id,title,sort_order')
       .single()
     if (error) return setError(error.message)
+    setThemes((list) => [...list, data])
     await setTodoTheme(d, data.id)
   }
-  // ⋯ Make this a theme: the todo keeps its place as the theme's first step, ready to rename
-  const makeTheme = (d: Detail) => newThemeFor(d, d.title)
   const renameTodo = async (d: Detail, title: string) => {
     setDetail({ ...d, title })
     const { error } = await supabase.from('cass_time_blocks').update({ title }).eq('id', d.id)
@@ -1359,7 +1360,6 @@ function DayPage() {
               themes={themes}
               // Themes are for todos, not habits or events
               onTheme={!detail.habitId && !detail.event ? setTodoTheme : undefined}
-              onNewTheme={newThemeFor}
               onMakeTheme={!detail.habitId && !detail.event && !detail.themeId ? makeTheme : undefined}
               onRename={!detail.habitId && !detail.event ? renameTodo : undefined}
             />
@@ -2767,7 +2767,6 @@ function DetailCard({
   onDelete,
   themes,
   onTheme,
-  onNewTheme,
   onMakeTheme,
   onRename,
 }: {
@@ -2785,11 +2784,10 @@ function DetailCard({
   onMoveToDay: (detail: Detail, day: string) => void
   // The ⋯ menu's Delete; left out where deleting wouldn't stick (habits come back)
   onDelete?: (detail: Detail) => void
-  // Theme row (todos only, not habits or events): pick one, make a new one, or none
+  // Theme row (todos only, not habits or events): pick one, convert to one, or none
   themes: { id: string; title: string }[]
   onTheme?: (detail: Detail, themeId: string | null) => void
-  onNewTheme?: (detail: Detail, title: string) => void
-  // ⋯ Make this a theme: a theme named after this todo, which stays as its first step
+  // Convert to theme: a theme named after this todo, which stays as its first step
   onMakeTheme?: (detail: Detail) => void
   // Tapping the title renames a todo
   onRename?: (detail: Detail, title: string) => void
@@ -2800,13 +2798,24 @@ function DetailCard({
   const [titleDraft, setTitleDraft] = useState(detail.title)
   useEffect(() => setTitleDraft(detail.title), [detail.title])
   const [pickingTheme, setPickingTheme] = useState(false)
-  const [newTheme, setNewTheme] = useState<string | null>(null)
   const themeName = themes.find((t) => t.id === detail.themeId)?.title
+  // Blur and the checkmark can both fire for one save
+  const savingTitle = useRef(false)
   const saveTitle = () => {
+    if (savingTitle.current) return
+    savingTitle.current = true
+    setTimeout(() => (savingTitle.current = false), 0)
     setRenaming(false)
     const next = titleDraft.trim()
     if (next && next !== detail.title) onRename?.(detail, next)
     else setTitleDraft(detail.title)
+  }
+  // The todo's title becomes the theme; the title opens for the step's own name
+  const convertToTheme = () => {
+    setPickingTheme(false)
+    onMakeTheme?.(detail)
+    setTitleDraft(detail.title)
+    setRenaming(true)
   }
   // Context: the Help events tied to this habit, day by day
   const [showContext, setShowContext] = useState(false)
@@ -2867,24 +2876,38 @@ function DetailCard({
   return (
     // Claims taps on the card so only the backdrop closes it
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
-      <View style={styles.modeRow}>
-        {renaming ? (
-          <TextInput
-            style={[styles.detailTitle, styles.modeHalf, styles.titleInput]}
-            value={titleDraft}
-            onChangeText={setTitleDraft}
-            autoFocus
-            returnKeyType="done"
-            onSubmitEditing={saveTitle}
-            onBlur={saveTitle}
-          />
-        ) : onRename ? (
-          <Pressable style={styles.modeHalf} onPress={() => setRenaming(true)} accessibilityHint="Tap to rename">
+      <View style={[styles.modeRow, { alignItems: 'flex-start' }]}>
+        <View style={styles.modeHalf}>
+          {/* The theme this todo is a step of, small above its title */}
+          {themeName ? (
+            <Text style={styles.titleTheme} numberOfLines={1}>
+              {themeName}
+            </Text>
+          ) : null}
+          {renaming ? (
+            <View style={styles.titleEditRow}>
+              <TextInput
+                style={[styles.detailTitle, styles.titleInput, { flex: 1 }]}
+                value={titleDraft}
+                onChangeText={setTitleDraft}
+                autoFocus
+                selectTextOnFocus
+                returnKeyType="done"
+                onSubmitEditing={saveTitle}
+                onBlur={saveTitle}
+              />
+              <Pressable style={styles.titleSave} onPress={saveTitle} hitSlop={8} accessibilityLabel="Save title">
+                <Check size={18} color={c.accent} />
+              </Pressable>
+            </View>
+          ) : onRename ? (
+            <Pressable onPress={() => setRenaming(true)} accessibilityHint="Tap to rename">
+              <Text style={styles.detailTitle}>{detail.title}</Text>
+            </Pressable>
+          ) : (
             <Text style={styles.detailTitle}>{detail.title}</Text>
-          </Pressable>
-        ) : (
-          <Text style={[styles.detailTitle, styles.modeHalf]}>{detail.title}</Text>
-        )}
+          )}
+        </View>
         {/* Every habit has Context: its last times, then any Help events tied to it */}
         {detail.habitId ? (
           <Pressable onPress={() => setShowContext(!showContext)} hitSlop={8} accessibilityState={{ expanded: showContext }}>
@@ -2910,11 +2933,11 @@ function DetailCard({
               style={[styles.menuItem, styles.menuRow]}
               onPress={() => {
                 setMoreOpen(false)
-                onMakeTheme(detail)
+                convertToTheme()
               }}
             >
               <Layers size={16} color={c.ink} />
-              <Text style={styles.menuText}>Make this a theme</Text>
+              <Text style={styles.menuText}>Convert to theme</Text>
             </Pressable>
           ) : null}
           {onDelete ? (
@@ -3050,30 +3073,12 @@ function DetailCard({
                       {t.id === detail.themeId ? <Check size={16} color={c.accent} /> : null}
                     </Pressable>
                   ))}
-                  {newTheme === null ? (
-                    <Pressable style={styles.themePickerRow} onPress={() => setNewTheme('')}>
-                      <Plus size={16} color={c.accent} />
-                      <Text style={[styles.menuText, { color: c.accent }]}>New theme…</Text>
+                  {onMakeTheme ? (
+                    <Pressable style={styles.themePickerRow} onPress={convertToTheme}>
+                      <Layers size={16} color={c.accent} />
+                      <Text style={[styles.menuText, { color: c.accent }]}>Convert to theme</Text>
                     </Pressable>
-                  ) : (
-                    <View style={styles.themePickerRow}>
-                      <TextInput
-                        style={[styles.addInput, { flex: 1 }]}
-                        value={newTheme}
-                        onChangeText={setNewTheme}
-                        placeholder="Theme name"
-                        placeholderTextColor={c.muted}
-                        autoFocus
-                        returnKeyType="done"
-                        onSubmitEditing={() => {
-                          if (!newTheme.trim()) return
-                          onNewTheme?.(detail, newTheme.trim())
-                          setNewTheme(null)
-                          setPickingTheme(false)
-                        }}
-                      />
-                    </View>
-                  )}
+                  ) : null}
                   {detail.themeId ? (
                     <Pressable
                       style={styles.themePickerRow}
@@ -3795,6 +3800,9 @@ const styles = StyleSheet.create({
   themesHeader: { marginTop: 12 },
   noNextStep: { color: c.accent, fontWeight: '600' },
   themeMenu: { top: 48, right: 12 },
+  titleTheme: { fontSize: 12, fontWeight: '600', color: c.accent, marginBottom: 2 },
+  titleEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  titleSave: { padding: 4 },
   titleInput: { borderBottomWidth: 1, borderBottomColor: c.accent, paddingVertical: 2 },
   themeChip: {
     flex: 1,
