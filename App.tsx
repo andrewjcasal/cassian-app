@@ -1950,6 +1950,13 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
             centerContent
             showsHorizontalScrollIndicator={false}
             showsVerticalScrollIndicator={false}
+            // Swiping up or down closes it, unless you're zoomed in and panning
+            alwaysBounceVertical
+            onScrollEndDrag={(e) => {
+              const { contentOffset, zoomScale, velocity } = e.nativeEvent
+              if ((zoomScale ?? 1) > 1.01) return
+              if (Math.abs(contentOffset.y) > 60 || Math.abs(velocity?.y ?? 0) > 1) setFullPhoto(false)
+            }}
           >
             <Pressable style={styles.screenFill} onPress={() => setFullPhoto(false)} accessibilityLabel="Close photo">
               <Image source={{ uri: photoUri }} style={styles.photoViewerImage} resizeMode="contain" />
