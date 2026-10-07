@@ -1,4 +1,4 @@
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ComponentProps, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Animated,
@@ -33,7 +33,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  LifeBuoy,
   Clock,
   GripVertical,
   ImagePlus,
@@ -44,6 +43,7 @@ import {
   LogOut,
   MoreHorizontal,
   MoreVertical,
+  ChartLine,
   Repeat,
   ExternalLink,
   Trash2,
@@ -57,6 +57,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker'
 import Slider from '@react-native-community/slider'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import Svg, { Circle as SvgCircle, Line as SvgLine, Path, Rect, Text as SvgText } from 'react-native-svg'
 import { supabase } from './src/supabase'
 import type { CassianDayProps } from './widgets/CassianDay'
 import type { ImagePickerOptions } from 'expo-image-picker'
@@ -128,6 +129,8 @@ import {
   lastTimes,
   averageMinutes,
   themeRows,
+  lastDays,
+  shutdownTimes,
   placeHabits,
   quarterOf,
   relayout,
@@ -264,7 +267,7 @@ function SignIn() {
   )
 }
 
-type Tab = 'todos' | 'agenda' | 'planning' | 'help'
+type Tab = 'todos' | 'agenda' | 'planning' | 'reflect'
 // A todo is a block added from this app, or a placed habit, that isn't done yet, on any day
 type Menu = { item: CalItem; x: number; y: number }
 // What the tap-to-open card shows. It keeps only the id, and a new length is
@@ -1066,11 +1069,12 @@ function DayPage() {
           help={help}
           onAddHelpSub={addHelpSub}
           onHelpHabit={setHelpHabit}
+          onTrack={trackHelp}
           onSettings={openSettings}
         />
       </View>
-      {tab === 'planning' ? null : tab === 'help' ? (
-        <HelpScreen help={help} onSettings={openSettings} onTrack={trackHelp} />
+      {tab === 'planning' ? null : tab === 'reflect' ? (
+        <ReflectScreen today={today} onSettings={openSettings} />
       ) : (
       <View style={styles.screenFill} {...(tab === 'agenda' ? daySwipe.panHandlers : {})}>
         {/* Stays put while the agenda or todos scroll underneath */}
@@ -1466,7 +1470,7 @@ const TABS = [
   { key: 'todos', label: 'Todos', Icon: ListTodo },
   { key: 'agenda', label: 'Agenda', Icon: CalendarDays },
   { key: 'planning', label: 'Planning', Icon: NotebookPen },
-  { key: 'help', label: 'Help', Icon: LifeBuoy },
+  { key: 'reflect', label: 'Reflect', Icon: ChartLine },
 ] as const
 
 // A Help event (Theo) and its sub-events with their starting lengths, from
@@ -1987,29 +1991,20 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
 
 // Help: a small card per person or pet; tapping one lists what you can do, and
 // picking one tracks it on today's agenda starting now
-function HelpScreen({
-  help,
-  onSettings,
-  onTrack,
-}: {
-  help: HelpGroup[]
-  onSettings: (at: { x: number; y: number }) => void
-  onTrack: (name: string, option: string) => void
-}) {
+// The Help cards (Theo, Cat Fight...): tap one, pick an option, and it's put on
+// the agenda from now. They sit under Planning's Help Events.
+function HelpCards({ help, onTrack }: { help: HelpGroup[]; onTrack: (name: string, option: string) => void }) {
   const [open, setOpen] = useState<HelpGroup | null>(null)
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.page}>
-        <ScreenHeader title="Help" onSettings={onSettings} />
-        <View style={styles.helpGrid}>
-          {help.map((h) => (
-            <Pressable key={h.name} style={styles.helpCard} onPress={() => setOpen(h)}>
-              <Text style={styles.helpCardText}>{h.name}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </ScrollView>
+      <View style={[styles.helpGrid, styles.helpCards]}>
+        {help.map((h) => (
+          <Pressable key={h.name} style={styles.helpCard} onPress={() => setOpen(h)}>
+            <Text style={styles.helpCardText}>{h.name}</Text>
+          </Pressable>
+        ))}
+      </View>
 
       <Modal visible={open !== null} transparent animationType="none" onRequestClose={() => setOpen(null)}>
         <Pressable style={styles.detailBackdrop} onPress={() => setOpen(null)}>
@@ -2037,17 +2032,162 @@ function HelpScreen({
   )
 }
 
+const SHUTDOWN_DAYS = 7
+const CHART_HEIGHT = 180
+// Room for the time labels on the left and the day labels underneath
+const CHART_PAD = { left: 52, right: 12, top: 12, bottom: 24 }
+
+// The Reflect tab: how the last week went. First up, when Shut down started each night.
+function ReflectScreen({ today, onSettings }: { today: string; onSettings: (at: { x: number; y: number }) => void }) {
+  const [points, setPoints] = useState<{ day: string; hours: number | null }[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [width, setWidth] = useState(0)
+
+  useEffect(() => {
+    const days = lastDays(today, SHUTDOWN_DAYS)
+    ;(async () => {
+      const habit = await supabase.from('cass_habits').select('id').eq('title', 'Shut down').maybeSingle()
+      if (habit.error) return setError(habit.error.message)
+      if (!habit.data) return setPoints(days.map((day) => ({ day, hours: null })))
+      const blockRes = await supabase
+        .from('cass_time_blocks')
+        .select('id,day,start_time,end_time,done,logical_day')
+        .eq('habit_id', habit.data.id)
+        .gte('logical_day', days[0])
+        .lte('logical_day', today)
+      if (blockRes.error) return setError(blockRes.error.message)
+      const blocks = blockRes.data ?? []
+      const stepRes = blocks.length
+        ? await supabase
+            .from('cass_time_blocks')
+            .select('process_id,day,start_time,end_time')
+            .in('process_id', blocks.map((b) => b.id))
+        : { data: [], error: null }
+      if (stepRes.error) return setError(stepRes.error.message)
+      setError(null)
+      setPoints(
+        shutdownTimes(
+          days,
+          blocks.map((b) => ({ id: b.id, done: b.done, ...fromStored(b.day, b.start_time, b.end_time) })),
+          (stepRes.data ?? []).map((st) => ({ processId: st.process_id as string, start: fromStored(st.day, st.start_time, st.end_time).start })),
+        ),
+      )
+    })()
+  }, [today])
+
+  const known = (points ?? []).filter((p): p is { day: string; hours: number } => p.hours !== null)
+  // The time range drawn: the nights shown, padded out to whole half hours
+  const lo = known.length ? Math.floor(Math.min(...known.map((p) => p.hours)) * 2) / 2 - 0.5 : 22
+  const hi = known.length ? Math.ceil(Math.max(...known.map((p) => p.hours)) * 2) / 2 + 0.5 : 24
+  const plotW = Math.max(width - CHART_PAD.left - CHART_PAD.right, 0)
+  const plotH = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom
+  const x = (i: number) => CHART_PAD.left + (plotW * i) / (SHUTDOWN_DAYS - 1)
+  // Later is lower, like a later bedtime pushing further down
+  const y = (h: number) => CHART_PAD.top + ((h - lo) / (hi - lo)) * plotH
+  const ticks: number[] = []
+  const step = hi - lo > 3 ? 1 : 0.5
+  for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-6; t += step) ticks.push(t)
+  // Lines only join nights next to each other; a night with no Shut down leaves a gap
+  const segments: string[] = []
+  ;(points ?? []).forEach((p, i, all) => {
+    const prev = all[i - 1]
+    if (p.hours !== null && prev && prev.hours !== null) segments.push(`M${x(i - 1)},${y(prev.hours)} L${x(i)},${y(p.hours)}`)
+  })
+  const [picked, setPicked] = useState<number | null>(null)
+  const latest = (() => {
+    for (let i = (points ?? []).length - 1; i >= 0; i--) if (points![i].hours !== null) return i
+    return null
+  })()
+  const labelled = picked ?? latest
+
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <ScreenHeader title="Reflect" onSettings={onSettings} />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Text style={styles.sectionLabel}>SHUT DOWN · LAST 7 NIGHTS</Text>
+      <View style={[styles.card, styles.chartCard]} onLayout={(e) => setWidth(e.nativeEvent.layout.width - 8)}>
+        {points === null ? (
+          <ActivityIndicator style={styles.emptySection} size="small" color={c.accent} />
+        ) : width > 0 ? (
+          <Svg width={width} height={CHART_HEIGHT}>
+            {ticks.map((t) => (
+              <Fragment key={t}>
+                <SvgLine x1={CHART_PAD.left} x2={width - CHART_PAD.right} y1={y(t)} y2={y(t)} stroke={c.line} strokeWidth={1} />
+                <SvgText x={CHART_PAD.left - 6} y={y(t) + 4} fontSize={11} fill={c.muted} textAnchor="end">
+                  {clock(t)}
+                </SvgText>
+              </Fragment>
+            ))}
+            {points.map((p, i) => (
+              <SvgText key={p.day} x={x(i)} y={CHART_HEIGHT - 6} fontSize={11} fill={c.muted} textAnchor="middle">
+                {p.day === today ? 'Today' : WEEKDAYS[new Date(`${p.day}T12:00:00`).getDay()]}
+              </SvgText>
+            ))}
+            {segments.map((d) => (
+              <Path key={d} d={d} stroke={c.accent} strokeWidth={2} fill="none" strokeLinecap="round" />
+            ))}
+            {points.map((p, i) =>
+              p.hours === null ? null : (
+                // A 2px ring in the card color keeps each dot clear of the line
+                <SvgCircle key={p.day} cx={x(i)} cy={y(p.hours)} r={5} fill={c.accent} stroke={c.card} strokeWidth={2} />
+              ),
+            )}
+            {labelled !== null && points[labelled].hours !== null ? (
+              <SvgText
+                x={Math.min(Math.max(x(labelled), CHART_PAD.left + 24), width - CHART_PAD.right - 24)}
+                y={y(points[labelled].hours!) - 10}
+                fontSize={12}
+                fontWeight="600"
+                fill={c.ink}
+                textAnchor="middle"
+              >
+                {clock(points[labelled].hours!)}
+              </SvgText>
+            ) : null}
+            {/* Tap a night for its time; the targets are whole columns, bigger than the dots */}
+            {points.map((p, i) => (
+              <Rect
+                key={`hit-${p.day}`}
+                x={x(i) - plotW / (SHUTDOWN_DAYS - 1) / 2}
+                y={0}
+                width={plotW / (SHUTDOWN_DAYS - 1)}
+                height={CHART_HEIGHT}
+                fill="transparent"
+                onPress={() => setPicked(p.hours === null ? null : i)}
+              />
+            ))}
+          </Svg>
+        ) : null}
+      </View>
+      {/* The same nights as a list, so the times read without the chart */}
+      {points ? (
+        <View style={styles.card}>
+          {[...points].reverse().map((p) => (
+            <View key={p.day} style={styles.lastTimeRow}>
+              <Text style={[styles.todoText, { flex: 1 }]}>{dayLabel(p.day)}</Text>
+              <Text style={styles.minutesLabel}>{p.hours === null ? 'Not shut down' : clock(p.hours)}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </ScrollView>
+  )
+}
+
 function HabitsScreen({
   active,
   today,
   help,
   onAddHelpSub,
   onHelpHabit,
+  onTrack,
   onSettings,
 }: {
   help: HelpGroup[]
   onAddHelpSub: (group: string, name: string) => void
   onHelpHabit: (group: string, option: string, habitId: string | null) => void
+  // The Help cards under Help Events: tap one, pick an option, and it's tracked
+  onTrack: (name: string, option: string) => void
   // Whether the Habits tab is showing; opening it refreshes in the background
   active: boolean
   today: string
@@ -2272,7 +2412,7 @@ function HabitsScreen({
               )
             })}
           </View>
-
+          <HelpCards help={help} onTrack={onTrack} />
         </View>
       </ScrollView>
 
@@ -4062,6 +4202,8 @@ const styles = StyleSheet.create({
     borderColor: c.line,
     backgroundColor: c.card,
   },
+  helpCards: { marginTop: 12 },
+  chartCard: { marginBottom: 12 },
   helpCardText: { fontSize: 16, fontWeight: '600', color: c.ink },
   stepCards: { flexDirection: 'row', gap: 6 },
   stepCard: {

@@ -12,6 +12,8 @@ import {
   doneAtEnd,
   durationOptions,
   fromStored,
+  lastDays,
+  shutdownTimes,
   logicalNow,
   toStored,
   newBlockStart,
@@ -944,4 +946,31 @@ test('halfSides: short and done early blocks take half, and an overlapped block 
   assert.deepEqual(Object.fromEntries(halfSides([block('early', 21, 22, { doneEarly: true })], top, 20)), {
     early: 'left',
   })
+})
+
+test('lastDays: the n days ending today, oldest first', () => {
+  assert.deepEqual(lastDays('2026-10-06', 3), ['2026-10-04', '2026-10-05', '2026-10-06'])
+  assert.deepEqual(lastDays('2026-10-01', 2), ['2026-09-30', '2026-10-01'])
+})
+
+test('shutdownTimes: when the routine started, else the block if done as scheduled, else nothing', () => {
+  const blocks = [
+    { id: 'a', day: '2026-10-03', start: 23, done: true },
+    { id: 'b', day: '2026-10-04', start: 23, done: true },
+    { id: 'c', day: '2026-10-05', start: 23, done: true },
+    { id: 'd', day: '2026-10-06', start: 22.5, done: false },
+  ]
+  const steps = [
+    { processId: 'a', start: 22.65 },
+    { processId: 'a', start: 22.9 },
+    // Started after midnight: still that night, so past 24
+    { processId: 'b', start: 24.25 },
+  ]
+  assert.deepEqual(shutdownTimes(['2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06'], blocks, steps), [
+    { day: '2026-10-02', hours: null },
+    { day: '2026-10-03', hours: 22.65 },
+    { day: '2026-10-04', hours: 24.25 },
+    { day: '2026-10-05', hours: 23 },
+    { day: '2026-10-06', hours: null },
+  ])
 })

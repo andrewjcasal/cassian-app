@@ -770,3 +770,26 @@ export function nightBefore(
 export function dayChoice(choice: 'today' | '1d' | '3d', today: string) {
   return choice === 'today' ? today : shiftDay(today, choice === '1d' ? 1 : 3)
 }
+
+// Reflect's day range: the n days ending today, oldest first
+export function lastDays(today: string, n: number) {
+  return Array.from({ length: n }, (_, i) => shiftDay(today, i - (n - 1)))
+}
+
+// Reflect's Shut down chart: for each day, when Shut down actually started. That's
+// the first routine step recorded under its block; a block marked done with no
+// steps counts at its own start; a day not shut down yet has nothing. Hours are
+// the day's own (past 24 is after midnight), as fromStored returns them.
+export function shutdownTimes(
+  days: string[],
+  blocks: { id: string; day: string; start: number; done: boolean }[],
+  steps: { processId: string; start: number }[],
+) {
+  return days.map((day) => {
+    const block = blocks.find((b) => b.day === day)
+    if (!block) return { day, hours: null }
+    const starts = steps.filter((st) => st.processId === block.id).map((st) => st.start)
+    if (starts.length) return { day, hours: Math.min(...starts) }
+    return { day, hours: block.done ? block.start : null }
+  })
+}
