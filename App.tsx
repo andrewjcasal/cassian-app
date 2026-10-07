@@ -2967,6 +2967,10 @@ function DetailCard({
           </Pressable>
         ) : null}
       </View>
+          {/* A tap anywhere else on the card closes the dropdown */}
+          {onTheme && pickingTheme ? (
+            <Pressable style={styles.pickerDismiss} onPress={() => setPickingTheme(false)} accessibilityLabel="Close theme list" />
+          ) : null}
           {onTheme && pickingTheme ? (
             <View style={[styles.themePicker, { top: pickerTop }]}>
               {themes.map((t) => (
@@ -3854,6 +3858,7 @@ const styles = StyleSheet.create({
   themeChipSet: { borderColor: c.accent, backgroundColor: c.block },
   themeChipText: { flex: 1, fontSize: 15, color: c.muted },
   themeChipTextSet: { color: c.ink, fontWeight: '600' },
+  pickerDismiss: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 9 },
   // Drops down over the title from the theme above it
   themePicker: {
     position: 'absolute',
