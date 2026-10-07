@@ -3740,7 +3740,7 @@ const styles = StyleSheet.create({
   // Lines up with the page's section labels (page padding is 12)
   themeNameBar: {
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingTop: 6,
     backgroundColor: c.bg,
   },
   themeNameText: { fontSize: 20, fontWeight: '600', color: c.theme },
