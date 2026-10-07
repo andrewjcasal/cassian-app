@@ -2818,6 +2818,7 @@ function DetailCard({
   const [titleDraft, setTitleDraft] = useState(detail.title)
   useEffect(() => setTitleDraft(detail.title), [detail.title])
   const [pickingTheme, setPickingTheme] = useState(false)
+  const [pickerTop, setPickerTop] = useState(46)
   const themeName = themes.find((t) => t.id === detail.themeId)?.title
   // Blur and the checkmark can both fire for one save
   const savingTitle = useRef(false)
@@ -2900,7 +2901,11 @@ function DetailCard({
         <View style={styles.modeHalf}>
           {/* The theme above the title: its dropdown, and a link to its page */}
           {onTheme ? (
-            <View style={styles.titleThemeRow}>
+            <View
+              style={styles.titleThemeRow}
+              // Where the dropdown starts: just under this row (the card has 16 of padding)
+              onLayout={(e) => setPickerTop(16 + e.nativeEvent.layout.y + e.nativeEvent.layout.height + 2)}
+            >
               <Pressable
                 // Plain text until tapped; the outlined chip shows only while its list is open
                 style={[styles.titleThemeChip, pickingTheme ? styles.titleThemeChipOpen : null]}
@@ -2963,7 +2968,7 @@ function DetailCard({
         ) : null}
       </View>
           {onTheme && pickingTheme ? (
-            <View style={styles.themePicker}>
+            <View style={[styles.themePicker, { top: pickerTop }]}>
               {themes.map((t) => (
                 <Pressable
                   key={t.id}
@@ -3849,7 +3854,23 @@ const styles = StyleSheet.create({
   themeChipSet: { borderColor: c.accent, backgroundColor: c.block },
   themeChipText: { flex: 1, fontSize: 15, color: c.muted },
   themeChipTextSet: { color: c.ink, fontWeight: '600' },
-  themePicker: { borderWidth: 1, borderColor: c.line, borderRadius: 8 },
+  // Drops down over the title from the theme above it
+  themePicker: {
+    position: 'absolute',
+    left: 16,
+    minWidth: 220,
+    maxWidth: '80%',
+    zIndex: 10,
+    elevation: 6,
+    backgroundColor: c.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: c.line,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
   themePickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   avgDisabled: { opacity: 0.5 },
   durationValue: { width: 52, textAlign: 'right' },
