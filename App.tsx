@@ -56,6 +56,7 @@ import {
 } from 'lucide-react-native'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import Slider from '@react-native-community/slider'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from './src/supabase'
 import type { CassianDayProps } from './widgets/CassianDay'
 import type { ImagePickerOptions } from 'expo-image-picker'
@@ -1700,6 +1701,8 @@ type TodoListItem = { id: string; title: string; done: boolean }
 
 // Planning's Todo Lists: paper lists captured as a photo, each with the todos
 // read off it (transcribe-todo-list). Tapping one opens its page.
+const TODO_LISTS_CACHE = 'cass:todo-lists'
+
 function TodoListsSection({ active }: { active: boolean }) {
   // null until the first load, so it never reads "None yet" before the server answers
   const [lists, setLists] = useState<TodoList[] | null>(null)
@@ -1715,15 +1718,19 @@ function TodoListsSection({ active }: { active: boolean }) {
       .order('created_at', { ascending: false })
     if (error) return setError(error.message)
     setError(null)
-    setLists(
-      (data ?? []).map(({ cass_todo_list_items: items, ...l }) => ({
-        ...l,
-        count: (items as { count: number }[] | null)?.[0]?.count ?? 0,
-      })),
-    )
+    const next = (data ?? []).map(({ cass_todo_list_items: items, ...l }) => ({
+      ...l,
+      count: (items as { count: number }[] | null)?.[0]?.count ?? 0,
+    }))
+    setLists(next)
+    AsyncStorage.setItem(TODO_LISTS_CACHE, JSON.stringify(next))
   }, [])
-  // Loaded on mount, while Planning is still hidden, then refreshed each time it opens
+  // The last lists seen show at once from the phone, then the server's answer
+  // replaces them; refreshed again each time the Todos tab opens
   useEffect(() => {
+    AsyncStorage.getItem(TODO_LISTS_CACHE).then((cached) => {
+      if (cached) setLists((current) => current ?? JSON.parse(cached))
+    })
     load()
   }, [load])
   useEffect(() => {
