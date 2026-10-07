@@ -1090,7 +1090,7 @@ function DayPage() {
               <ChevronLeft size={18} color={c.accent} />
               <Text style={styles.backText}>Back</Text>
             </Pressable>
-            <Text style={[styles.title, { flex: 1 }]}>Theme</Text>
+            <Text style={[styles.title, styles.themeHeaderTitle]}>Theme</Text>
             <View style={[styles.headerRight, { width: 64, justifyContent: 'flex-end' }]}>
               <Pressable onPress={() => setThemeMenu(!themeMenu)} hitSlop={10} accessibilityLabel="More" accessibilityState={{ expanded: themeMenu }}>
                 <MoreHorizontal size={20} color={c.ink} />
@@ -3740,9 +3740,10 @@ const styles = StyleSheet.create({
   // Lines up with the page's section labels (page padding is 12)
   themeNameBar: {
     paddingHorizontal: 12,
-    paddingTop: 6,
+    paddingTop: 14,
     backgroundColor: c.bg,
   },
+  themeHeaderTitle: { flex: 1, fontSize: 17 },
   themeNameText: { fontSize: 20, fontWeight: '600', color: c.theme },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   title: { fontSize: 22, fontWeight: '600', color: c.ink, textAlign: 'center' },
