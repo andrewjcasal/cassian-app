@@ -1318,6 +1318,10 @@ function DayPage() {
                 </View>
               </>
             ) : null}
+            {/* Todo Lists sit under Themes; mounted from Agenda too (hidden) so they're loaded before you switch */}
+            <View style={tab === 'todos' && !openTheme && !allTodos ? null : styles.hidden}>
+              <TodoListsSection active={tab === 'todos'} />
+            </View>
           </ScrollView>
         </Animated.View>
       </View>
@@ -2207,7 +2211,7 @@ function HabitsScreen({
           </View>
         ))}
 
-        {/* Hidden, not unmounted, on the Habits page so Todo Lists keeps what it loaded */}
+        {/* Help Events: Planning only, not the Habits page */}
         <View style={showHabits ? styles.hidden : null}>
           <Text style={styles.sectionLabel}>HELP EVENTS</Text>
           <View style={styles.card}>
@@ -2265,7 +2269,6 @@ function HabitsScreen({
             })}
           </View>
 
-          <TodoListsSection active={active} />
         </View>
       </ScrollView>
 
