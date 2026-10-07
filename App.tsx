@@ -44,6 +44,7 @@ import {
   LogOut,
   MoreHorizontal,
   MoreVertical,
+  Repeat,
   ExternalLink,
   Trash2,
   NotebookPen,
@@ -2124,13 +2125,43 @@ function HabitsScreen({
     { title: 'DAILY HABITS', list: habits.filter((h) => h.frequency === 'daily') },
     { title: 'WEEKLY HABITS', list: habits.filter((h) => h.frequency === 'weekly') },
   ]
+  // The Habits page, opened from Planning's Habits row
+  const [showHabits, setShowHabits] = useState(false)
 
   return (
     <>
       <ScrollView contentContainerStyle={styles.page}>
-        <ScreenHeader title="Planning" onSettings={onSettings} onAdd={() => setAdding(true)} />
+        {showHabits ? (
+          <View style={styles.header}>
+            <Pressable onPress={() => setShowHabits(false)} hitSlop={10} accessibilityLabel="Back" style={[styles.backButton, { width: 64 }]}>
+              <ChevronLeft size={18} color={c.accent} />
+              <Text style={styles.backText}>Back</Text>
+            </Pressable>
+            <Text style={[styles.title, { flex: 1 }]}>Habits</Text>
+            <View style={[styles.headerRight, { width: 64, justifyContent: 'flex-end' }]}>
+              <Pressable style={styles.addButton} onPress={() => setAdding(true)} hitSlop={8}>
+                <Plus size={16} color={c.accent} />
+                <Text style={styles.addButtonText}>Add</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <ScreenHeader title="Planning" onSettings={onSettings} />
+        )}
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        {sections.map(({ title, list }) => (
+        {showHabits ? null : (
+          <View style={styles.card}>
+            <Pressable style={styles.todoRow} onPress={() => setShowHabits(true)} accessibilityLabel="Habits">
+              <Repeat size={18} color={c.accent} />
+              <Text style={[styles.todoText, { flex: 1 }]}>Habits</Text>
+              <Text style={styles.minutesLabel}>
+                {sections[0].list.length} daily · {sections[1].list.length} weekly
+              </Text>
+              <ChevronRight size={18} color={c.muted} />
+            </Pressable>
+          </View>
+        )}
+        {!showHabits ? null : sections.map(({ title, list }) => (
           <View key={title}>
             <Text style={styles.sectionLabel}>{title}</Text>
             <View style={styles.card}>
@@ -2156,63 +2187,67 @@ function HabitsScreen({
           </View>
         ))}
 
-        <Text style={styles.sectionLabel}>HELP EVENTS</Text>
-        <View style={styles.card}>
-          {help.map((h) => {
-            const open = helpExpanded.has(h.name)
-            return (
-              <View key={h.name}>
-                <Pressable
-                  style={styles.todoRow}
-                  onPress={() =>
-                    setHelpExpanded((set) => {
-                      const next = new Set(set)
-                      if (open) next.delete(h.name)
-                      else next.add(h.name)
-                      return next
-                    })
-                  }
-                  accessibilityState={{ expanded: open }}
-                >
-                  <View style={styles.titleWithAdd}>
-                    <Text style={styles.todoText}>{h.name}</Text>
-                    {/* Adding a sub-event shows only while the row is expanded */}
-                    {open ? (
-                      <Pressable
-                        onPress={() => {
-                          setSubName('')
-                          setAddingSub(h.name)
-                        }}
-                        hitSlop={10}
-                        accessibilityLabel={`Add a sub-event to ${h.name}`}
-                      >
-                        <Plus size={18} color={c.accent} />
-                      </Pressable>
-                    ) : null}
-                  </View>
-                  <Text style={styles.minutesLabel}>
-                    {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
-                  </Text>
-                  {open ? <ChevronDown size={18} color={c.muted} /> : <ChevronRight size={18} color={c.muted} />}
-                </Pressable>
-                {open
-                  ? h.options.map((option) => (
-                      <Pressable
-                        key={option}
-                        style={[styles.todoRow, styles.subRow]}
-                        onPress={() => setSubEvent({ name: h.name, option })}
-                      >
-                        <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
-                        <Text style={styles.minutesLabel}>{h.minutes[option] ?? HELP_MINUTES} min</Text>
-                      </Pressable>
-                    ))
-                  : null}
-              </View>
-            )
-          })}
-        </View>
+        {showHabits ? null : (
+          <>
+          <Text style={styles.sectionLabel}>HELP EVENTS</Text>
+          <View style={styles.card}>
+            {help.map((h) => {
+              const open = helpExpanded.has(h.name)
+              return (
+                <View key={h.name}>
+                  <Pressable
+                    style={styles.todoRow}
+                    onPress={() =>
+                      setHelpExpanded((set) => {
+                        const next = new Set(set)
+                        if (open) next.delete(h.name)
+                        else next.add(h.name)
+                        return next
+                      })
+                    }
+                    accessibilityState={{ expanded: open }}
+                  >
+                    <View style={styles.titleWithAdd}>
+                      <Text style={styles.todoText}>{h.name}</Text>
+                      {/* Adding a sub-event shows only while the row is expanded */}
+                      {open ? (
+                        <Pressable
+                          onPress={() => {
+                            setSubName('')
+                            setAddingSub(h.name)
+                          }}
+                          hitSlop={10}
+                          accessibilityLabel={`Add a sub-event to ${h.name}`}
+                        >
+                          <Plus size={18} color={c.accent} />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    <Text style={styles.minutesLabel}>
+                      {h.options.length} {h.options.length === 1 ? 'event' : 'events'}
+                    </Text>
+                    {open ? <ChevronDown size={18} color={c.muted} /> : <ChevronRight size={18} color={c.muted} />}
+                  </Pressable>
+                  {open
+                    ? h.options.map((option) => (
+                        <Pressable
+                          key={option}
+                          style={[styles.todoRow, styles.subRow]}
+                          onPress={() => setSubEvent({ name: h.name, option })}
+                        >
+                          <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
+                          <Text style={styles.minutesLabel}>{h.minutes[option] ?? HELP_MINUTES} min</Text>
+                        </Pressable>
+                      ))
+                    : null}
+                </View>
+              )
+            })}
+          </View>
 
-        <TodoListsSection active={active} />
+          <TodoListsSection active={active} />
+          </>
+        )}
       </ScrollView>
 
       {/* Outside the ScrollView, so one tap on the backdrop closes it */}
