@@ -974,3 +974,11 @@ test('shutdownTimes: when the routine started, else the block if done as schedul
     { day: '2026-10-06', hours: null },
   ])
 })
+
+test('doneNowPlan: Done now after midnight ends the block now, keeping its length', () => {
+  const shutDown: CalItem = { id: 'sd', title: 'Shut down', start: 22.5, end: 23.25, kind: 'block', done: false }
+  const plan = doneNowPlan([shutDown], shutDown, '2026-10-06', '2026-10-06', 24.5)
+  assert.equal(plan.start, 23.75)
+  assert.equal(plan.end, 24.5)
+  assert.deepEqual(plan.moves, [])
+})

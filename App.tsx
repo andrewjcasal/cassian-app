@@ -879,8 +879,10 @@ function DayPage() {
   const doneNow = async (d: Detail) => {
     setDetail(null)
     const item = d.day === day ? items.find((it) => it.id === d.id) : undefined
+    // Done now is your call, so it retimes a set-time habit like Shut down too: it
+    // ends now. Only the automatic rules leave set-time habits where they are.
     const movable =
-      !d.event && !d.fixed && (d.from === 'todo' || (item?.kind === 'block' && (item.source === 'app' || item.source === 'habit')))
+      !d.event && (d.from === 'todo' || (item?.kind === 'block' && (item.source === 'app' || item.source === 'habit')))
     if (!movable) {
       if (item) return setStatus(item, 'done')
       const { error } = await supabase
