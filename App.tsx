@@ -3847,7 +3847,7 @@ const styles = StyleSheet.create({
   invisible: { opacity: 0 },
   addCard: { marginTop: 8 },
   themesHeader: { marginTop: 12 },
-  noNextStep: { color: c.accent, fontWeight: '600' },
+  noNextStep: { color: c.theme, fontWeight: '600' },
   themeMenu: { top: 48, right: 12 },
   titleThemeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   titleThemeChip: {
