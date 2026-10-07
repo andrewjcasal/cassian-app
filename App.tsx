@@ -159,6 +159,9 @@ const c = {
   line: '#e4e2dc',
   accent: '#2f5d50',
   block: '#e6efe9',
+  // Burgundy, the accent green's complement: a todo's theme
+  theme: '#7a2e3b',
+  themeTint: '#f6e9ec',
   blockDone: '#4ade80',
   // Events (fixed appointments) on the agenda
   event: '#dbeafe',
@@ -2905,14 +2908,14 @@ function DetailCard({
                 accessibilityState={{ expanded: pickingTheme }}
                 accessibilityLabel={themeName ? `Theme: ${themeName}. Change it` : 'Pick a theme'}
               >
-                <Text style={[styles.titleThemeText, themeName ? styles.themeChipTextSet : null]} numberOfLines={1}>
+                <Text style={[styles.titleThemeText, themeName ? styles.titleThemeTextSet : null]} numberOfLines={1}>
                   {themeName ?? 'No theme'}
                 </Text>
-                <ChevronDown size={14} color={themeName ? c.accent : c.muted} />
+                <ChevronDown size={16} color={themeName ? c.theme : c.muted} />
               </Pressable>
               {themeName && onOpenTheme ? (
                 <Pressable onPress={() => onOpenTheme(detail.themeId!)} hitSlop={8} accessibilityLabel={`Open ${themeName}`}>
-                  <ExternalLink size={16} color={c.accent} />
+                  <ExternalLink size={16} color={c.theme} />
                 </Pressable>
               ) : null}
             </View>
@@ -3826,8 +3829,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  titleThemeChipOpen: { paddingHorizontal: 8, borderColor: c.accent, backgroundColor: c.block },
-  titleThemeText: { flexShrink: 1, fontSize: 13, color: c.muted },
+  titleThemeChipOpen: { paddingHorizontal: 8, borderColor: c.theme, backgroundColor: c.themeTint },
+  titleThemeText: { flexShrink: 1, fontSize: 15, color: c.muted },
+  titleThemeTextSet: { color: c.theme, fontWeight: '600' },
   titleEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   titleSave: { padding: 4 },
   titleInput: { borderBottomWidth: 1, borderBottomColor: c.accent, paddingVertical: 2 },
