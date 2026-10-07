@@ -44,6 +44,7 @@ import {
   LogOut,
   MoreHorizontal,
   MoreVertical,
+  ExternalLink,
   Trash2,
   NotebookPen,
   Pause,
@@ -445,11 +446,21 @@ function DayPage() {
   useEffect(() => {
     loadThemes()
   }, [loadThemes, byDay])
+  // A theme page asked for from another tab, opened once the tab switches
+  const pendingTheme = useRef<string | null>(null)
   useEffect(() => {
-    setOpenThemeId(null)
+    setOpenThemeId(pendingTheme.current)
+    pendingTheme.current = null
     setThemeMenu(false)
     setRenamingTheme(false)
   }, [tab])
+  // The card's link icon: the theme's page, with its todos
+  const openThemePage = (id: string) => {
+    setDetail(null)
+    if (tab === 'todos') return setOpenThemeId(id)
+    pendingTheme.current = id
+    setTab('todos')
+  }
   const themeTitle = (id: string | null | undefined) => (id ? themes.find((t) => t.id === id)?.title : undefined)
   const openTheme = themes.find((t) => t.id === openThemeId) ?? null
 
@@ -1364,6 +1375,7 @@ function DayPage() {
               // Themes are for todos, not habits or events
               onTheme={!detail.habitId && !detail.event ? setTodoTheme : undefined}
               onMakeTheme={!detail.habitId && !detail.event && !detail.themeId ? makeTheme : undefined}
+              onOpenTheme={openThemePage}
               onRename={!detail.habitId && !detail.event ? renameTodo : undefined}
             />
           ) : null}
@@ -1628,8 +1640,7 @@ function ThemeSteps({
             <ChevronRight size={18} color={c.muted} />
           </Pressable>
         ))}
-        {!open.length ? <Text style={[styles.minutesLabel, styles.emptySection]}>No next step yet. What's the next thing to do?</Text> : null}
-        <View style={[styles.addRow, styles.addRowDivider]}>
+        <View style={[styles.addRow, open.length > 0 && styles.addRowDivider]}>
           <TextInput
             style={styles.addInput}
             value={draft}
@@ -2771,6 +2782,7 @@ function DetailCard({
   themes,
   onTheme,
   onMakeTheme,
+  onOpenTheme,
   onRename,
 }: {
   detail: Detail
@@ -2792,6 +2804,8 @@ function DetailCard({
   onTheme?: (detail: Detail, themeId: string | null) => void
   // Convert to theme: a theme named after this todo, which stays as its first step
   onMakeTheme?: (detail: Detail) => void
+  // The link icon beside the theme: its page in the Todos tab
+  onOpenTheme?: (themeId: string) => void
   // Tapping the title renames a todo
   onRename?: (detail: Detail, title: string) => void
 }) {
@@ -2881,11 +2895,26 @@ function DetailCard({
     <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
       <View style={[styles.modeRow, { alignItems: 'flex-start' }]}>
         <View style={styles.modeHalf}>
-          {/* The theme this todo is a step of, small above its title */}
-          {themeName ? (
-            <Text style={styles.titleTheme} numberOfLines={1}>
-              {themeName}
-            </Text>
+          {/* The theme above the title: its dropdown, and a link to its page */}
+          {onTheme ? (
+            <View style={styles.titleThemeRow}>
+              <Pressable
+                style={[styles.themeChip, styles.titleThemeChip, themeName ? styles.themeChipSet : null]}
+                onPress={() => setPickingTheme(!pickingTheme)}
+                accessibilityState={{ expanded: pickingTheme }}
+                accessibilityLabel={themeName ? `Theme: ${themeName}. Change it` : 'Pick a theme'}
+              >
+                <Text style={[styles.titleThemeText, themeName ? styles.themeChipTextSet : null]} numberOfLines={1}>
+                  {themeName ?? 'No theme'}
+                </Text>
+                <ChevronDown size={14} color={themeName ? c.accent : c.muted} />
+              </Pressable>
+              {themeName && onOpenTheme ? (
+                <Pressable onPress={() => onOpenTheme(detail.themeId!)} hitSlop={8} accessibilityLabel={`Open ${themeName}`}>
+                  <ExternalLink size={16} color={c.accent} />
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
           {renaming ? (
             <View style={styles.titleEditRow}>
@@ -2929,6 +2958,42 @@ function DetailCard({
           </Pressable>
         ) : null}
       </View>
+          {onTheme && pickingTheme ? (
+            <View style={styles.themePicker}>
+              {themes.map((t) => (
+                <Pressable
+                  key={t.id}
+                  style={styles.themePickerRow}
+                  onPress={() => {
+                    setPickingTheme(false)
+                    if (t.id !== detail.themeId) onTheme(detail, t.id)
+                  }}
+                >
+                  <Text style={[styles.menuText, { flex: 1 }]} numberOfLines={1}>
+                    {t.title}
+                  </Text>
+                  {t.id === detail.themeId ? <Check size={16} color={c.accent} /> : null}
+                </Pressable>
+              ))}
+              {onMakeTheme ? (
+                <Pressable style={styles.themePickerRow} onPress={convertToTheme}>
+                  <Layers size={16} color={c.accent} />
+                  <Text style={[styles.menuText, { color: c.accent }]}>Convert to theme</Text>
+                </Pressable>
+              ) : null}
+              {detail.themeId ? (
+                <Pressable
+                  style={styles.themePickerRow}
+                  onPress={() => {
+                    setPickingTheme(false)
+                    onTheme(detail, null)
+                  }}
+                >
+                  <Text style={[styles.menuText, { color: c.muted }]}>None</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
       {moreOpen && (onDelete || onMakeTheme) ? (
         <View style={[styles.menu, styles.moreMenu]}>
           {onMakeTheme ? (
@@ -3043,60 +3108,6 @@ function DetailCard({
     ) : null}
   </>
 ) : null}
-          {onTheme ? (
-            <>
-              <View style={styles.sliderRow}>
-                <Text style={styles.sliderLabel}>Theme</Text>
-                <Pressable
-                  style={[styles.themeChip, themeName ? styles.themeChipSet : null]}
-                  onPress={() => setPickingTheme(!pickingTheme)}
-                  accessibilityState={{ expanded: pickingTheme }}
-                  accessibilityLabel={themeName ? `Theme: ${themeName}. Change it` : 'Pick a theme'}
-                >
-                  <Text style={[styles.themeChipText, themeName ? styles.themeChipTextSet : null]} numberOfLines={1}>
-                    {themeName ?? 'None'}
-                  </Text>
-                  <ChevronDown size={14} color={themeName ? c.accent : c.muted} />
-                </Pressable>
-              </View>
-              {pickingTheme ? (
-                <View style={styles.themePicker}>
-                  {themes.map((t) => (
-                    <Pressable
-                      key={t.id}
-                      style={styles.themePickerRow}
-                      onPress={() => {
-                        setPickingTheme(false)
-                        if (t.id !== detail.themeId) onTheme(detail, t.id)
-                      }}
-                    >
-                      <Text style={[styles.menuText, { flex: 1 }]} numberOfLines={1}>
-                        {t.title}
-                      </Text>
-                      {t.id === detail.themeId ? <Check size={16} color={c.accent} /> : null}
-                    </Pressable>
-                  ))}
-                  {onMakeTheme ? (
-                    <Pressable style={styles.themePickerRow} onPress={convertToTheme}>
-                      <Layers size={16} color={c.accent} />
-                      <Text style={[styles.menuText, { color: c.accent }]}>Convert to theme</Text>
-                    </Pressable>
-                  ) : null}
-                  {detail.themeId ? (
-                    <Pressable
-                      style={styles.themePickerRow}
-                      onPress={() => {
-                        setPickingTheme(false)
-                        onTheme(detail, null)
-                      }}
-                    >
-                      <Text style={[styles.menuText, { color: c.muted }]}>None</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              ) : null}
-            </>
-          ) : null}
 
           {/* Every block's start is yours to move, a set-time habit like Shut down
               included; the automatic rules still leave set-time habits where they are */}
@@ -3803,7 +3814,9 @@ const styles = StyleSheet.create({
   themesHeader: { marginTop: 12 },
   noNextStep: { color: c.accent, fontWeight: '600' },
   themeMenu: { top: 48, right: 12 },
-  titleTheme: { fontSize: 12, fontWeight: '600', color: c.accent, marginBottom: 2 },
+  titleThemeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  titleThemeChip: { flex: 0, flexShrink: 1, paddingVertical: 2, paddingHorizontal: 8 },
+  titleThemeText: { flexShrink: 1, fontSize: 13, color: c.muted },
   titleEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   titleSave: { padding: 4 },
   titleInput: { borderBottomWidth: 1, borderBottomColor: c.accent, paddingVertical: 2 },
@@ -3821,7 +3834,7 @@ const styles = StyleSheet.create({
   themeChipSet: { borderColor: c.accent, backgroundColor: c.block },
   themeChipText: { flex: 1, fontSize: 15, color: c.muted },
   themeChipTextSet: { color: c.ink, fontWeight: '600' },
-  themePicker: { borderWidth: 1, borderColor: c.line, borderRadius: 8, marginLeft: 72 },
+  themePicker: { borderWidth: 1, borderColor: c.line, borderRadius: 8 },
   themePickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   avgDisabled: { opacity: 0.5 },
   durationValue: { width: 52, textAlign: 'right' },
