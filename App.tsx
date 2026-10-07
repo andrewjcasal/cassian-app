@@ -1303,10 +1303,13 @@ function DayPage() {
                   ) : null}
                   {themeRows(themes, themeSteps).map((r) => (
                     <Pressable key={r.id} style={styles.todoRow} onPress={() => setOpenThemeId(r.id)}>
-                      <Text style={[styles.todoText, { flex: 1 }]}>{r.title}</Text>
-                      <Text style={[styles.minutesLabel, !r.next && styles.noNextStep]}>
-                        {r.next ? `${r.open} ${r.open === 1 ? 'todo' : 'todos'} · ${whenLabel(r.next.day, r.next.start, today)}` : 'No next step'}
-                      </Text>
+                      {/* The title gets the full width; its next step sits underneath */}
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.todoText}>{r.title}</Text>
+                        <Text style={[styles.minutesLabel, !r.next && styles.noNextStep]}>
+                          {r.next ? `${r.open} ${r.open === 1 ? 'todo' : 'todos'} · ${whenLabel(r.next.day, r.next.start, today)}` : 'No next step'}
+                        </Text>
+                      </View>
                       <ChevronRight size={18} color={c.muted} />
                     </Pressable>
                   ))}
