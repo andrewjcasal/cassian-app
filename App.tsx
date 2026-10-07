@@ -43,6 +43,7 @@ import {
   Layers,
   LogOut,
   MoreHorizontal,
+  MoreVertical,
   Trash2,
   NotebookPen,
   Pause,
@@ -898,7 +899,9 @@ function DayPage() {
   // The card's ⋯ Delete: removes the todo; the todos after it stay where they are
   const deleteTodo = async (d: Detail) => {
     setDetail(null)
-    const { error } = await supabase.from('cass_time_blocks').delete().eq('id', d.id)
+    // Agenda items can be legacy cass_tasks rows
+    const isTask = d.from === 'item' && items.find((it) => it.id === d.id)?.kind === 'task'
+    const { error } = await supabase.from(isTask ? 'cass_tasks' : 'cass_time_blocks').delete().eq('id', d.id)
     if (error) return setError(error.message)
     await Promise.all([loadDay(d.day), d.day === day ? null : load()])
   }
@@ -1356,7 +1359,7 @@ function DayPage() {
                 .map((it) => ({ id: it.id, title: it.title, start: it.start, end: it.end }))}
               help={help}
               onMoveToDay={moveToDay}
-              onDelete={detail.from === 'todo' && !detail.habitId && !detail.event ? deleteTodo : undefined}
+              onDelete={!detail.habitId && !detail.event ? deleteTodo : undefined}
               themes={themes}
               // Themes are for todos, not habits or events
               onTheme={!detail.habitId && !detail.event ? setTodoTheme : undefined}
@@ -2922,7 +2925,7 @@ function DetailCard({
             accessibilityLabel="More"
             accessibilityState={{ expanded: moreOpen }}
           >
-            <MoreHorizontal size={18} color={c.ink} />
+            <MoreVertical size={18} color={c.ink} />
           </Pressable>
         ) : null}
       </View>
@@ -3874,7 +3877,7 @@ const styles = StyleSheet.create({
   photoViewerImage: { width: '100%', height: '100%' },
   photoViewerCloseButton: { position: 'absolute', right: 12, zIndex: 2, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: 8 },
   todoDoneText: { textDecorationLine: 'line-through', color: c.muted },
-  moreButton: { alignSelf: 'center', marginLeft: 12 },
+  moreButton: { alignSelf: 'flex-start', marginTop: 4, marginLeft: 12 },
   moreMenu: { top: 44, right: 12 },
   deleteText: { color: c.now, fontWeight: '600' },
   durationsSaving: { justifyContent: 'center', alignItems: 'center', minHeight: 30 },
