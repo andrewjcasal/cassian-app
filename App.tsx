@@ -3089,7 +3089,8 @@ function DetailCard({
             {clock(start)} – {clock(start + minutes / 60)} · {minutes} min
           </Text>
 
-{detail.from === 'todo' ? (
+{/* Done blocks keep their date and time; only the read-out above shows them */}
+{detail.from === 'todo' && !detail.done ? (
   <>
     <View style={styles.sliderRow}>
       <Text style={styles.sliderLabel}>Date</Text>
@@ -3128,47 +3129,51 @@ function DetailCard({
   </>
 ) : null}
 
-          {/* Every block's start is yours to move, a set-time habit like Shut down
-              included; the automatic rules still leave set-time habits where they are */}
-          <View style={styles.sliderRow}>
-              <Text style={styles.sliderLabel}>Start</Text>
+          {detail.done ? null : (
+            <>
+            {/* Every block's start is yours to move, a set-time habit like Shut down
+                included; the automatic rules still leave set-time habits where they are */}
+            <View style={styles.sliderRow}>
+                <Text style={styles.sliderLabel}>Start</Text>
+                <SteadySlider
+                  style={styles.slider}
+                  value={offset}
+                  minimumValue={-START_SLIDER_RANGE}
+                  maximumValue={START_SLIDER_RANGE}
+                  step={SLIDER_STEP}
+                  minimumTrackTintColor={c.line}
+                  maximumTrackTintColor={c.line}
+                  thumbTintColor={c.accent}
+                  onValueChange={(v) => setOffset(Math.round(v))}
+                  onSlidingComplete={() => {
+                    if (startMin !== savedStart) onMove(detail, startMin / 60)
+                    else setOffset(0)
+                  }}
+                  accessibilityLabel="Move the start time earlier or later"
+                />
+            </View>
+
+            <View style={styles.sliderRow}>
+              <Text style={styles.sliderLabel}>Duration</Text>
               <SteadySlider
                 style={styles.slider}
-                value={offset}
-                minimumValue={-START_SLIDER_RANGE}
-                maximumValue={START_SLIDER_RANGE}
+                value={minutes}
+                minimumValue={SLIDER_STEP}
+                maximumValue={Math.max(SLIDER_MAX, saved)}
                 step={SLIDER_STEP}
-                minimumTrackTintColor={c.line}
+                minimumTrackTintColor={c.accent}
                 maximumTrackTintColor={c.line}
                 thumbTintColor={c.accent}
-                onValueChange={(v) => setOffset(Math.round(v))}
-                onSlidingComplete={() => {
-                  if (startMin !== savedStart) onMove(detail, startMin / 60)
-                  else setOffset(0)
+                onValueChange={(v) => setMinutes(Math.round(v))}
+                onSlidingComplete={(v) => {
+                  const next = Math.round(v)
+                  if (next !== saved) onResize(detail, next)
                 }}
-                accessibilityLabel="Move the start time earlier or later"
+                accessibilityLabel="Duration in minutes"
               />
-          </View>
-
-          <View style={styles.sliderRow}>
-            <Text style={styles.sliderLabel}>Duration</Text>
-            <SteadySlider
-              style={styles.slider}
-              value={minutes}
-              minimumValue={SLIDER_STEP}
-              maximumValue={Math.max(SLIDER_MAX, saved)}
-              step={SLIDER_STEP}
-              minimumTrackTintColor={c.accent}
-              maximumTrackTintColor={c.line}
-              thumbTintColor={c.accent}
-              onValueChange={(v) => setMinutes(Math.round(v))}
-              onSlidingComplete={(v) => {
-                const next = Math.round(v)
-                if (next !== saved) onResize(detail, next)
-              }}
-              accessibilityLabel="Duration in minutes"
-            />
-          </View>
+            </View>
+            </>
+          )}
 
           {routineSteps.length ? (
             <View style={styles.stepCards}>
