@@ -3742,8 +3742,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: c.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: c.line,
   },
   themeNameText: { fontSize: 20, fontWeight: '600', color: c.theme },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
