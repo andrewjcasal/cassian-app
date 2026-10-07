@@ -532,7 +532,7 @@ function DayPage() {
       setDay(step.day)
       await loadDay(step.day)
     }
-    setDetail({ id: step.id, from: 'todo', title: step.title, day: step.day, start: step.start, end: step.end, done: false, fixed: false, event: false, habitId: null, themeId: step.themeId })
+    setDetail({ id: step.id, from: 'todo', title: step.title, day: step.day, start: step.start, end: step.end, done: step.done, fixed: false, event: false, habitId: null, themeId: step.themeId })
   }
 
   // Only pull to refresh shows the spinner; every other load happens quietly
@@ -1671,11 +1671,13 @@ function ThemeSteps({
           {showDone ? (
             <View style={styles.card}>
               {done.slice(0, 10).map((st) => (
-                <View key={st.id} style={styles.todoRow}>
+                // Opens its card, where ⋯ has Delete
+                <Pressable key={st.id} style={styles.todoRow} onPress={() => onOpen(st)}>
                   <CircleCheck size={18} color={c.accent} />
                   <Text style={[styles.todoText, styles.todoDoneText, { flex: 1 }]}>{st.title}</Text>
                   <Text style={styles.minutesLabel}>{whenLabel(st.day, st.start, today)}</Text>
-                </View>
+                  <ChevronRight size={18} color={c.muted} />
+                </Pressable>
               ))}
             </View>
           ) : null}
