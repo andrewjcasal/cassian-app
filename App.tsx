@@ -3737,10 +3737,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: c.line,
   },
+  // Lines up with the page's section labels (page padding is 12)
   themeNameBar: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: c.card,
+    backgroundColor: c.bg,
     borderBottomWidth: 1,
     borderBottomColor: c.line,
   },
