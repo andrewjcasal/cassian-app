@@ -1932,9 +1932,16 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
       </ScrollView>
 
       {/* A layer over the page, not a second Modal: iOS doesn't reliably close a
-          Modal opened from inside another. Tapping the photo or the X closes it. */}
-      {fullPhoto && photoUri ? (
-        <View style={[StyleSheet.absoluteFill, styles.photoViewer]}>
+          Modal opened from inside another. Tapping the photo or the X closes it.
+          It stays mounted, invisible, once there's a photo, so the full size image is
+          already loaded and decoded when you tap; mounting it on tap made it lag. */}
+      {photoUri ? (
+        <View
+          style={[StyleSheet.absoluteFill, styles.photoViewer, fullPhoto ? null : styles.photoViewerHidden]}
+          pointerEvents={fullPhoto ? 'auto' : 'none'}
+          accessibilityElementsHidden={!fullPhoto}
+          importantForAccessibility={fullPhoto ? 'auto' : 'no-hide-descendants'}
+        >
           <ScrollView
             style={styles.screenFill}
             contentContainerStyle={styles.photoViewerContent}
@@ -3989,6 +3996,7 @@ const styles = StyleSheet.create({
   captureQuietText: { fontSize: 16, fontWeight: '600', color: c.accent },
   readingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 8 },
   photoViewer: { backgroundColor: '#000000', zIndex: 20 },
+  photoViewerHidden: { opacity: 0 },
   photoViewerContent: { flexGrow: 1, justifyContent: 'center' },
   photoViewerImage: { width: '100%', height: '100%' },
   photoViewerCloseButton: { position: 'absolute', right: 12, zIndex: 2, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: 8 },
