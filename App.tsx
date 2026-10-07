@@ -466,7 +466,6 @@ function DayPage() {
     pendingTheme.current = id
     setTab('todos')
   }
-  const themeTitle = (id: string | null | undefined) => (id ? themes.find((t) => t.id === id)?.title : undefined)
   const openTheme = themes.find((t) => t.id === openThemeId) ?? null
 
   const addTheme = async () => {
@@ -1206,7 +1205,6 @@ function DayPage() {
                     >
                       <Text style={[styles.todoText, { flex: 1 }]}>{t.title}</Text>
                       <Text style={styles.minutesLabel}>
-                    {themeTitle(t.themeId) ? `${themeTitle(t.themeId)} · ` : ''}
                     {t.habit ? 'Habit · ' : ''}
                     {dayLabel(t.day)}
                   </Text>
@@ -1229,7 +1227,6 @@ function DayPage() {
                   // A reorder in the preview keeps the rest of the day after it
                   onReorder={(next) => reorder([...next, ...todos.slice(next.length)])}
                   onDragging={setDragging}
-                  themeTitle={themeTitle}
                   onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null, themeId: t.themeId ?? null })}
                 />
                 {!allTodos && todos.length > TODO_PREVIEW ? (
@@ -3503,7 +3500,6 @@ function TodoList({
   onReorder,
   onDragging,
   onOpen,
-  themeTitle,
 }: {
   todos: Todo[]
   today: string
@@ -3511,8 +3507,6 @@ function TodoList({
   onReorder: (next: Todo[]) => void
   onDragging: (dragging: boolean) => void
   onOpen: (todo: Todo) => void
-  // A todo's theme, shown first in its grey line
-  themeTitle: (themeId: string | null | undefined) => string | undefined
 }) {
   const [drag, setDrag] = useState<{ id: string; from: number; to: number } | null>(null)
   const dy = useRef(new Animated.Value(0)).current
@@ -3611,7 +3605,6 @@ function TodoList({
               today={today}
               onMinutes={(m) => onMinutes(t, m)}
               onOpen={() => onOpen(t)}
-              theme={themeTitle(t.themeId)}
               handle={responderFor(t.id).panHandlers}
             />
           </Animated.View>
@@ -3626,14 +3619,12 @@ function TodoRow({
   today,
   onMinutes,
   onOpen,
-  theme,
   handle,
 }: {
   todo: Todo
   today: string
   onMinutes: (minutes: number) => Promise<void> | void
   onOpen: () => void
-  theme?: string
   handle: PanResponderInstance['panHandlers']
 }) {
   const minutes = Math.round((todo.end - todo.start) * 60)
@@ -3663,7 +3654,6 @@ function TodoRow({
       <Pressable style={{ flex: 1 }} onPress={onOpen}>
         <Text style={styles.todoText}>{todo.title}</Text>
         <Text style={styles.todoMeta}>
-          {theme ? `${theme} · ` : ''}
           {todo.habit ? 'Habit · ' : ''}
           {todo.day === today ? '' : `${dayLabel(todo.day)} · `}
           {clock(todo.start)}
