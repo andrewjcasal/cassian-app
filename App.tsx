@@ -2899,7 +2899,8 @@ function DetailCard({
           {onTheme ? (
             <View style={styles.titleThemeRow}>
               <Pressable
-                style={[styles.themeChip, styles.titleThemeChip, themeName ? styles.themeChipSet : null]}
+                // Plain text until tapped; the outlined chip shows only while its list is open
+                style={[styles.titleThemeChip, pickingTheme ? styles.titleThemeChipOpen : null]}
                 onPress={() => setPickingTheme(!pickingTheme)}
                 accessibilityState={{ expanded: pickingTheme }}
                 accessibilityLabel={themeName ? `Theme: ${themeName}. Change it` : 'Pick a theme'}
@@ -3815,7 +3816,17 @@ const styles = StyleSheet.create({
   noNextStep: { color: c.accent, fontWeight: '600' },
   themeMenu: { top: 48, right: 12 },
   titleThemeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  titleThemeChip: { flex: 0, flexShrink: 1, paddingVertical: 2, paddingHorizontal: 8 },
+  titleThemeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+    gap: 4,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  titleThemeChipOpen: { paddingHorizontal: 8, borderColor: c.accent, backgroundColor: c.block },
   titleThemeText: { flexShrink: 1, fontSize: 13, color: c.muted },
   titleEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   titleSave: { padding: 4 },
