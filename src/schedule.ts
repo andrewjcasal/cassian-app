@@ -51,9 +51,17 @@ export const DURATION_STEPS = [5, 15, 30, 45, 60, 90, 120, 180, 240]
 
 const EPS = 1e-6
 
-// A day runs 6am to 6am, and blocks can be scheduled until 2am (hour 26)
-export const DAY_START = 6
-export const DAY_END = 26
+// One time divides the days: Settings' "Day starts at" (cass_settings.day_start),
+// 5am unless changed. A day runs from that hour to the same hour the next
+// morning, and blocks can be scheduled right up to it (DAY_END is DAY_START + 24).
+// These are live bindings, so everything reading them follows setDayStart.
+export const DEFAULT_DAY_START = 5
+export let DAY_START = DEFAULT_DAY_START
+export let DAY_END = DAY_START + 24
+export function setDayStart(hour: number) {
+  DAY_START = hour
+  DAY_END = hour + 24
+}
 
 // "13:30:00" -> 13.5
 export function hoursOf(time: string) {
@@ -98,8 +106,8 @@ export function dateAt(day: string, hours: number) {
   return new Date(y, m - 1, d, Math.floor(total / 60), total % 60)
 }
 
-// Which day it is and how far into it, for a day that runs 6am to 6am: at 1:30am
-// on the 2nd it's still the 1st, 25.5 hours in.
+// Which day it is and how far into it, for a day that runs DAY_START to DAY_START:
+// with a 5am start, at 1:30am on the 2nd it's still the 1st, 25.5 hours in.
 export function logicalNow(date: Date) {
   const hours = date.getHours() + date.getMinutes() / 60
   if (hours >= DAY_START) return { day: toDayString(date), hours }
@@ -118,7 +126,7 @@ export function toStored(day: string, start: number, end: number) {
   }
 }
 
-// The reverse: a block stored before 6am belongs to the night before, and an end
+// The reverse: a block stored before DAY_START belongs to the night before, and an end
 // earlier than its start means it ran past midnight.
 export function fromStored(storedDay: string, startTime: string, endTime: string | null) {
   let start = hoursOf(startTime)
@@ -176,7 +184,7 @@ const shift = (it: { id: string; kind: 'block' | 'task'; start: number; end: num
 })
 
 // The first gap at or after `from` that fits `length` hours between the day's
-// blocks, or null if nothing fits before 2am. A block done early has given
+// blocks, or null if nothing fits before the next day starts. A block done early has given
 // its slot back, so it doesn't count as taken.
 export function freeSlot(items: CalItem[], from: number, length: number) {
   let cursor = from
@@ -190,7 +198,7 @@ export function freeSlot(items: CalItem[], from: number, length: number) {
 
 // Where a new todo or follow-up of `length` hours starts: the first gap that fits
 // it, looking from 8am, or from the next quarter hour today if that's later. Null
-// if nothing fits before 2am. (Habits on an upcoming day still wait for 3pm,
+// if nothing fits before the next day starts. (Habits on an upcoming day still wait for 3pm,
 // FILL_FROM_HOUR, unless they're anytime.)
 export function newBlockStart(items: CalItem[], length: number, isToday: boolean, now: number) {
   const from = isToday ? Math.max(TODO_FROM_HOUR, nextQuarter(now)) : TODO_FROM_HOUR
@@ -367,7 +375,7 @@ export function startNowPlan(items: CalItem[], item: CalItem, now: number): { mo
   const delta = minuteOf(now) - item.start
   if (delta <= 0) return { moves: [] }
   const later = carried(items, item, item.start)
-  if (Math.max(item.end, ...later.map((it) => it.end)) + delta > DAY_END + EPS) return { error: 'That runs past 2am' }
+  if (Math.max(item.end, ...later.map((it) => it.end)) + delta > DAY_END + EPS) return { error: `That runs past ${clock(DAY_END)}` }
   return { moves: [item, ...later].map((it) => shift(it, delta)) }
 }
 
@@ -395,7 +403,7 @@ export function donePlan(items: CalItem[], item: CalItem, day: string, today: st
 
 // Done now from the card: the todo or habit ends now. One under way keeps its
 // start; one not started yet, already past, or on another day moves so it ends
-// now at its own length (never before 6am), landing on today. A not started one
+// now at its own length (never before the day starts), landing on today. A not started one
 // today frees its slot, so the later todos and habits move up into it.
 export function doneNowPlan(items: CalItem[], item: CalItem, day: string, today: string, now: number) {
   const at = minuteOf(now)
@@ -447,7 +455,7 @@ export function notStartedPlan(
     moves.push({ id: it.id, kind: it.kind, start: cursor, end: cursor + len })
     cursor += len
   }
-  if (cursor > DAY_END + EPS) return { error: 'That runs past 2am' }
+  if (cursor > DAY_END + EPS) return { error: `That runs past ${clock(DAY_END)}` }
   return { moves }
 }
 
@@ -498,7 +506,7 @@ export function interruptPlan(
     )
     .map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
   const moves = pushFrom(rest, end)
-  if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
+  if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: `That runs past ${clock(DAY_END)}` }
   return { start, end, moves }
 }
 
@@ -529,7 +537,7 @@ export function insertAtPlan(
     )
     .map((it): Move => ({ id: it.id, kind: it.kind, start: it.start, end: it.end }))
   const moves = pushFrom(later, end)
-  if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
+  if (Math.max(end, ...moves.map((m) => m.end)) > DAY_END + EPS) return { error: `That runs past ${clock(DAY_END)}` }
   return { start, end, moves }
 }
 
@@ -541,7 +549,7 @@ function moveWith(target: Move, others: Move[], newStart: number): { moves: Move
   const length = target.end - target.start
   const moved = { ...target, start: newStart, end: newStart + length }
   const moves = [moved, ...pushFrom(others.filter((o) => o.start >= newStart - EPS), moved.end)]
-  if (Math.max(...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
+  if (Math.max(...moves.map((m) => m.end)) > DAY_END + EPS) return { error: `That runs past ${clock(DAY_END)}` }
   return { moves }
 }
 
@@ -561,7 +569,7 @@ function resizeWith(target: Move, later: Move[], minutes: number): { moves: Move
   const newEnd = target.start + minutes / 60
   if (Math.abs(newEnd - target.end) < EPS) return { moves: [] }
   const moves = [{ ...target, end: newEnd }, ...followOn(later, target.end, newEnd)]
-  if (Math.max(...moves.map((m) => m.end)) > DAY_END + EPS) return { error: 'That runs past 2am' }
+  if (Math.max(...moves.map((m) => m.end)) > DAY_END + EPS) return { error: `That runs past ${clock(DAY_END)}` }
   return { moves }
 }
 
@@ -724,8 +732,8 @@ export function swipeDays(dx: number, dy: number) {
   return dx < 0 ? 1 : -1
 }
 
-// Set start times a habit can pick: every half hour from 6am (the day's start)
-// to 1:30am, the last that still fits before the 2am end
+// Set start times a habit can pick: every half hour from the day's start to the
+// last half hour before the next day starts
 export function startTimeOptions() {
   const out: number[] = []
   for (let h = DAY_START; h <= DAY_END - 0.5 + EPS; h += 0.5) out.push(h)
@@ -733,7 +741,7 @@ export function startTimeOptions() {
 }
 
 // A habit's set time as stored ("01:30:00" for 1:30am) and as hours into its
-// 6am to 6am day (25.5): a time before 6am is after midnight of that night
+// day (25.5): a time before DAY_START is after midnight of that night
 export function habitStartValue(hours: number) {
   return timeOf(hours >= 24 - EPS ? hours - 24 : hours)
 }
@@ -742,7 +750,7 @@ export function habitStartHours(time: string) {
   return h < DAY_START - EPS ? h + 24 : h
 }
 
-// Rows grouped by their 6am to 6am day, newest day first, latest first within a day
+// Rows grouped by their day (DAY_START to DAY_START), newest day first, latest first within a day
 export function groupByDay<R extends { day: string; start: number }>(rows: R[]) {
   const days = new Map<string, R[]>()
   for (const r of rows) days.set(r.day, [...(days.get(r.day) ?? []), r])

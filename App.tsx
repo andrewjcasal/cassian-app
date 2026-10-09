@@ -43,6 +43,7 @@ import {
   LogOut,
   MoreHorizontal,
   MoreVertical,
+  Minus,
   ChartLine,
   Repeat,
   ExternalLink,
@@ -95,6 +96,8 @@ import {
   halfSides,
   DAY_END,
   DAY_START,
+  DEFAULT_DAY_START,
+  setDayStart,
   fromStored,
   hoursOf,
   logicalNow,
@@ -144,7 +147,6 @@ import {
 } from './src/schedule'
 
 const HOUR_PX = 80
-const FIRST_HOUR = 6
 const EVENT_LEFT = 52
 // Cards stop this far from the right; tapping that strip adds a todo at that time
 const EVENT_RIGHT = 30
@@ -152,10 +154,8 @@ const EVENT_RIGHT = 30
 const TODO_PREVIEW = 5
 // A short block is at least this tall so its title stays readable
 const SHORT_MIN_PX = 20
-// Today opens scrolled to this many hours before now (the grid still runs 6am to 2am)
+// Today opens scrolled to this many hours before now (the grid still runs the whole day)
 const LOOKBACK_HOURS = 3
-// The agenda runs to 2am (hour 26); scheduling itself still stops at midnight
-const LAST_HOUR = 26
 
 const c = {
   bg: '#fafaf7',
@@ -197,14 +197,52 @@ function hasSetTime(habit: unknown) {
   return !!row?.start_time
 }
 
-// How far into today we are; before 6am that's 24 plus the hour (see logicalNow)
+// How far into today we are; before the day starts that's 24 plus the hour (see logicalNow)
 function nowHours() {
   return logicalNow(new Date()).hours
 }
 
+const DAY_START_CACHE = 'cass:day-start'
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [ready, setReady] = useState(false)
+  // Settings' "Day starts at" (cass_settings.day_start). Known before the day
+  // screens draw, from the phone's copy if there is one, so today is right from
+  // the first frame; the server's value follows.
+  const [dayStart, setDayStartState] = useState<number | null>(null)
+  const applyDayStart = useCallback((hour: number) => {
+    setDayStart(hour)
+    setDayStartState(hour)
+    AsyncStorage.setItem(DAY_START_CACHE, String(hour))
+  }, [])
+  useEffect(() => {
+    if (!session) return
+    let known = false
+    AsyncStorage.getItem(DAY_START_CACHE).then((cached) => {
+      if (cached !== null && !known) {
+        setDayStart(Number(cached))
+        setDayStartState(Number(cached))
+      }
+    })
+    supabase
+      .from('cass_settings')
+      .select('day_start')
+      .maybeSingle()
+      .then(({ data }) => {
+        known = true
+        applyDayStart(data?.day_start ?? DEFAULT_DAY_START)
+      })
+  }, [session, applyDayStart])
+  // Changing it redraws the day screens; this keeps Settings open through that
+  const [settingsAfterRedraw, setSettingsAfterRedraw] = useState(false)
+  const changeDayStart = async (hour: number) => {
+    setSettingsAfterRedraw(true)
+    const before = DAY_START
+    applyDayStart(hour)
+    const { error } = await supabase.from('cass_settings').upsert({ day_start: hour, updated_at: new Date().toISOString() })
+    if (error) applyDayStart(before)
+  }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -219,7 +257,14 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar style="dark" />
       <SafeAreaView style={styles.screen}>
-        {!ready ? <ActivityIndicator style={{ marginTop: 40 }} /> : session ? <DayPage /> : <SignIn />}
+        {!ready || (session && dayStart === null) ? (
+          <ActivityIndicator style={{ marginTop: 40 }} />
+        ) : session ? (
+          // A new day start redraws every day from scratch, so nothing keeps the old cutover
+          <DayPage key={dayStart} dayStart={dayStart!} onDayStart={changeDayStart} settingsOpenAtStart={settingsAfterRedraw} />
+        ) : (
+          <SignIn />
+        )}
       </SafeAreaView>
     </SafeAreaProvider>
   )
@@ -291,7 +336,16 @@ type Detail = {
   themeId?: string | null
 }
 
-function DayPage() {
+function DayPage({
+  dayStart,
+  onDayStart,
+  settingsOpenAtStart,
+}: {
+  dayStart: number
+  onDayStart: (hour: number) => void
+  // Reopens Settings after a day start change redraws this page
+  settingsOpenAtStart: boolean
+}) {
   const today = logicalNow(new Date()).day
   const [day, setDay] = useState(today)
   const [tab, setTab] = useState<Tab>('agenda')
@@ -396,7 +450,7 @@ function DayPage() {
   const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   // The Settings page (the gear on every tab)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(settingsOpenAtStart)
   const openSettings = () => setSettingsOpen(true)
   // Auto-schedule (cass_settings, on by default): moving a todo to another day
   // puts it at that day's first open time from 8am (moveToDayStart)
@@ -545,8 +599,9 @@ function DayPage() {
   const [error, setError] = useState<string | null>(null)
   const { width } = useWindowDimensions()
 
-  // A day's blocks and timed tasks. The day runs 6am to 6am: that date from 6am
-  // on, plus the next date before 6am.
+  // A day's blocks and timed tasks. The day runs from DAY_START (Settings, 5am by
+  // default) to the same time the next morning: that date from DAY_START on, plus
+  // the next date before it.
   const fetchDayItems = useCallback(async (day: string) => {
     const next = shiftDay(day, 1)
     const morning = timeOf(DAY_START)
@@ -590,7 +645,7 @@ function DayPage() {
 
   // Today, every habit without a block yet goes into the first gap that fits it.
   // The (habit_id, logical_day) unique index keeps a racing load from placing one
-  // twice; logical_day is the 6am to 6am day, so a habit after midnight still counts
+  // twice; logical_day is the DAY_START to DAY_START day, so a habit after midnight still counts
   // for the night before.
   const placeHabitBlocks = useCallback(
     async (current: CalItem[], day: string) => {
@@ -721,8 +776,8 @@ function DayPage() {
   useEffect(() => {
     if (tab !== 'agenda' || day !== today) return
     scrollToNowPending.current = true
-    const hour = Math.max(FIRST_HOUR, Math.floor(nowHours() - LOOKBACK_HOURS))
-    agendaScroll.current?.scrollTo({ y: (hour - FIRST_HOUR) * HOUR_PX, animated: false })
+    const hour = Math.max(DAY_START, Math.floor(nowHours() - LOOKBACK_HOURS))
+    agendaScroll.current?.scrollTo({ y: (hour - DAY_START) * HOUR_PX, animated: false })
   }, [tab, day, today])
 
   // Today and yesterday are fetched as soon as the app opens
@@ -948,7 +1003,7 @@ function DayPage() {
   }
 
   // Records one stretch of a routine as a block under its parent (process_id),
-  // on the 6am to 6am day it started. Under a minute isn't kept.
+  // on the day it started (DAY_START to DAY_START). Under a minute isn't kept.
   const recordSegment = async (name: string, startMs: number, endMs: number) => {
     if (!routine || endMs - startMs < 60_000) return
     const begin = logicalNow(new Date(startMs))
@@ -1177,8 +1232,8 @@ function DayPage() {
             onContentSizeChange={() => {
               if (!scrollToNowPending.current || tab !== 'agenda' || day !== today) return
               scrollToNowPending.current = false
-              const hour = Math.max(FIRST_HOUR, Math.floor(nowHours() - LOOKBACK_HOURS))
-              agendaScroll.current?.scrollTo({ y: (hour - FIRST_HOUR) * HOUR_PX, animated: false })
+              const hour = Math.max(DAY_START, Math.floor(nowHours() - LOOKBACK_HOURS))
+              agendaScroll.current?.scrollTo({ y: (hour - DAY_START) * HOUR_PX, animated: false })
             }}
             scrollEnabled={!dragging}
             contentContainerStyle={styles.page}
@@ -1441,6 +1496,8 @@ function DayPage() {
 
       <Modal visible={settingsOpen} animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <SettingsPage
+          dayStart={dayStart}
+          onDayStart={onDayStart}
           autoSchedule={autoSchedule}
           onAutoSchedule={changeAutoSchedule}
           onClose={() => setSettingsOpen(false)}
@@ -1466,7 +1523,7 @@ type Habit = {
   use_average: boolean
 }
 
-// One of a habit's blocks, with its 6am to 6am day and times
+// One of a habit's blocks, with its day (DAY_START to DAY_START) and times
 type HabitBlock = { logical_day: string; done: boolean; start: number; end: number; habit_week: string | null }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -1513,11 +1570,16 @@ function ModalScreen({ style, children }: { style: ComponentProps<typeof View>['
 
 // The gear's page: settings, then Sign out at the bottom
 function SettingsPage({
+  dayStart,
+  onDayStart,
   autoSchedule,
   onAutoSchedule,
   onClose,
   onSignOut,
 }: {
+  // The hour one day ends and the next begins
+  dayStart: number
+  onDayStart: (hour: number) => void
   autoSchedule: boolean
   onAutoSchedule: (on: boolean) => void
   onClose: () => void
@@ -1536,6 +1598,36 @@ function SettingsPage({
         <View style={{ width: 64 }} />
       </View>
       <ScrollView contentContainerStyle={[styles.page, styles.settingsPage]}>
+        <Text style={styles.sectionLabel}>DAY</Text>
+        <View style={styles.card}>
+          <View style={styles.settingRow}>
+            <Text style={styles.todoText}>Day starts at</Text>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              style={styles.stepButton}
+              onPress={() => onDayStart(dayStart - 1)}
+              disabled={dayStart <= 0}
+              hitSlop={8}
+              accessibilityLabel="An hour earlier"
+            >
+              <Minus size={16} color={dayStart <= 0 ? c.line : c.accent} />
+            </Pressable>
+            <Text style={[styles.todoText, styles.stepValue]}>{clock(dayStart)}</Text>
+            <Pressable
+              style={styles.stepButton}
+              onPress={() => onDayStart(dayStart + 1)}
+              disabled={dayStart >= 8}
+              hitSlop={8}
+              accessibilityLabel="An hour later"
+            >
+              <Plus size={16} color={dayStart >= 8 ? c.line : c.accent} />
+            </Pressable>
+          </View>
+          <Text style={[styles.tooltipText, styles.settingNote]}>
+            The night before runs until {clock(dayStart)}, and the new day starts then.
+          </Text>
+        </View>
+
         <Text style={styles.sectionLabel}>SCHEDULING</Text>
         <View style={styles.card}>
           <View style={styles.settingRow}>
@@ -3890,9 +3982,10 @@ function DayGrid({
   onAddAt: (hour: number) => void
 }) {
   const nowHours = logicalNow(new Date()).hours
-  // Every day, today included, runs the whole 6am to 2am; today opens scrolled near now
-  const first = FIRST_HOUR
-  const last = LAST_HOUR
+  // Every day, today included, runs from DAY_START to the next day's start; today
+  // opens scrolled near now
+  const first = DAY_START
+  const last = DAY_END
   const hours = useMemo(() => Array.from({ length: last - first }, (_, i) => first + i), [first, last])
   const top = (h: number) => (Math.min(Math.max(h, first), last) - first) * HOUR_PX
   // Routine steps are listed on their parent's card, not drawn on the grid
@@ -4154,6 +4247,9 @@ const styles = StyleSheet.create({
   reflectNote: { flex: 1, paddingTop: 2, color: c.ink },
   lastTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   settingsPage: { flexGrow: 1 },
+  stepButton: { padding: 6, borderRadius: 6, borderWidth: 1, borderColor: c.line },
+  stepValue: { minWidth: 48, textAlign: 'center' },
+  settingNote: { paddingHorizontal: 8, paddingBottom: 8 },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 8 },
   tooltip: { marginHorizontal: 8, marginBottom: 8, padding: 10, borderRadius: 8, backgroundColor: c.block },
   tooltipText: { fontSize: 15, lineHeight: 21, color: c.ink },

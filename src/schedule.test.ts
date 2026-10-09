@@ -13,6 +13,9 @@ import {
   durationOptions,
   fromStored,
   lastDays,
+  setDayStart,
+  DAY_END,
+  DAY_START,
   shortDay,
   shutdownTimes,
   logicalNow,
@@ -86,7 +89,7 @@ test('freeSlot finds the first gap that fits', () => {
   assert.equal(freeSlot(day, at(18, 30), 0.25), 20)
   assert.equal(freeSlot([...day, block('h', 17, at(17, 15))], 17, 0.25), at(17, 15))
   assert.equal(freeSlot([block('a', 10, 11), block('b', at(11, 6), 12)], at(10, 54), 0.25), 12)
-  assert.equal(freeSlot([block('a', 20, 26)], at(25, 54), 0.25), null)
+  assert.equal(freeSlot([block('a', 20, 29)], at(28, 54), 0.25), null)
   assert.equal(freeSlot([block('a', 20, 24)], at(23, 54), 0.25), 24)
 })
 
@@ -103,7 +106,7 @@ test('newBlockStart puts a new todo or follow-up in the first gap from 8am or th
   assert.equal(newBlockStart(items, 1, true, at(6, 30)), 8)
   assert.equal(newBlockStart(items, 1, false, at(16, 10)), 8)
   assert.equal(newBlockStart([block('busy', 8, at(23, 30))], 1, false, at(16, 10)), at(23, 30))
-  assert.equal(newBlockStart([block('busy', 8, at(25, 30))], 1, false, at(16, 10)), null)
+  assert.equal(newBlockStart([block('busy', 8, at(28, 30))], 1, false, at(16, 10)), null)
 })
 
 test('placeHabits fills gaps from now and skips habits already placed', () => {
@@ -228,11 +231,11 @@ test('interruptPlan starts the block now and pushes the todos and habits not fin
   assert.deepEqual(fmt(plan.moves), ['washer@18:27-19:27', 'skool@19:27-19:42'])
 })
 
-test('interruptPlan with nothing on leaves everything alone, and refuses past 2am', () => {
+test('interruptPlan with nothing on leaves everything alone, and refuses past 5am', () => {
   const plan = interruptPlan([block('later', 21, 22)], at(18, 12), 0.25)
   if (!('moves' in plan)) throw new Error(plan.error)
   assert.deepEqual(fmt(plan.moves), [])
-  assert.ok('error' in interruptPlan([], at(25, 55), 0.25))
+  assert.ok('error' in interruptPlan([], at(28, 55), 0.25))
 })
 
 test('routineFrom runs from the picked step to the end', () => {
@@ -491,7 +494,7 @@ test('insertAtPlan puts a todo at the tapped time and pushes the todos and habit
   assert.deepEqual([plan.start, plan.end], [16, 17])
   // washer and skool follow on; later at 8pm already clears, earlier and Shut down stay
   assert.deepEqual(fmt(plan.moves), ['washer@17:00-18:00', 'skool@18:00-18:15'])
-  assert.ok('error' in insertAtPlan([], at(25, 30), 1))
+  assert.ok('error' in insertAtPlan([], at(28, 30), 1))
 })
 
 test('quarterOf rounds a tapped time to the nearest quarter hour', () => {
@@ -548,11 +551,11 @@ test('Moving an event from its card moves it and pushes the todos it now overlap
   assert.deepEqual(fmt(plan.moves), ['dentist@16:30-17:30', 'washer@17:30-18:30'])
 })
 
-test('startTimeOptions runs every half hour from 6am to 1:30am', () => {
+test('startTimeOptions runs every half hour from 5am to 4:30am', () => {
   const options = startTimeOptions()
-  assert.equal(options[0], 6)
-  assert.equal(options[options.length - 1], at(25, 30))
-  assert.equal(options.length, 40)
+  assert.equal(options[0], 5)
+  assert.equal(options[options.length - 1], at(28, 30))
+  assert.equal(options.length, 48)
   assert.ok(options.includes(23))
 })
 
@@ -618,13 +621,13 @@ test('Start now before the block starts changes nothing', () => {
   assert.deepEqual(plan, { moves: [] })
 })
 
-test('Start now can run past midnight but refuses to run past 2am', () => {
+test('Start now can run past midnight but refuses to run past 5am', () => {
   const late = block('late', 22, at(23, 50))
   const plan = startNowPlan([late], late, at(22, 30))
   if (!('moves' in plan)) throw new Error(plan.error)
   assert.deepEqual(fmt(plan.moves), ['late@22:30-24:20'])
-  const later = block('later', 24, at(25, 50))
-  assert.ok('error' in startNowPlan([later], later, at(24, 30)))
+  const later = block('later', 27, at(28, 50))
+  assert.ok('error' in startNowPlan([later], later, at(27, 30)))
 })
 
 test('Done on a block under way ends it now and moves later blocks up', () => {
@@ -692,15 +695,15 @@ test('Done now on a todo whose time has passed moves it to end now and leaves th
   assert.deepEqual(plan.moves, [])
 })
 
-test('Done now on a todo from another day lands it today ending now, never before 6am', () => {
+test('Done now on a todo from another day lands it today ending now, never before 5am', () => {
   const yesterday = block('x', 19, 20)
   const plan = doneNowPlan([yesterday], yesterday, '2026-09-30', DAY, at(19, 27))
   assert.equal(plan.start, at(18, 27))
   assert.equal(plan.end, at(19, 27))
   assert.deepEqual(plan.moves, [])
-  const early = doneNowPlan([yesterday], yesterday, '2026-09-30', DAY, at(6, 20))
-  assert.equal(early.start, 6)
-  assert.equal(early.end, at(6, 20))
+  const early = doneNowPlan([yesterday], yesterday, '2026-09-30', DAY, at(5, 20))
+  assert.equal(early.start, 5)
+  assert.equal(early.end, at(5, 20))
 })
 
 test('A block done early does not count as taken when finding a gap', () => {
@@ -764,12 +767,12 @@ test('Not started on an earlier day moves the block after that day last block', 
   assert.deepEqual(fmt(plan.moves), ['carve@18:00-19:00'])
 })
 
-test('Not started can push the chain past midnight but refuses to run past 2am', () => {
+test('Not started can push the chain past midnight but refuses to run past 5am', () => {
   const carve = block('carve', 15, 16)
   const ok = notStartedPlan([carve, block('late', 23, at(23, 50))], carve, DAY, DAY, at(23, 0))
   if (!('moves' in ok)) throw new Error(ok.error)
   assert.deepEqual(fmt(ok.moves), ['carve@23:00-24:00', 'late@24:00-24:50'])
-  assert.ok('error' in notStartedPlan([carve], carve, DAY, DAY, at(25, 30)))
+  assert.ok('error' in notStartedPlan([carve], carve, DAY, DAY, at(28, 30)))
 })
 
 test('resizePlan changes the length and shifts the same day later todos', () => {
@@ -796,7 +799,7 @@ test('resizeItemPlan changes a block length and shifts the todos and habits afte
   const pastMidnight = resizeItemPlan(items, washer, 120)
   if (!('moves' in pastMidnight)) throw new Error(pastMidnight.error)
   assert.deepEqual(fmt(pastMidnight.moves), ['washer@22:12-24:12', 'skool@24:12-24:27'])
-  assert.ok('error' in resizeItemPlan(items, washer, 240))
+  assert.ok('error' in resizeItemPlan(items, washer, 420))
 })
 
 test('Lengthening pushes later blocks only as far as needed, so a block after a gap stays put', () => {
@@ -855,12 +858,12 @@ test('Moving a block earlier moves only that block', () => {
   assert.deepEqual(fmt(plan.moves), ['b@18:30-19:30'])
 })
 
-test('Moving a block can go past midnight but refuses to run past 2am', () => {
+test('Moving a block can go past midnight but refuses to run past 5am', () => {
   const a = block('a', 20, 21)
   const plan = moveStartPlan([a], a, at(23, 30))
   if (!('moves' in plan)) throw new Error(plan.error)
   assert.deepEqual(fmt(plan.moves), ['a@23:30-24:30'])
-  assert.ok('error' in moveStartPlan([a], a, at(25, 30)))
+  assert.ok('error' in moveStartPlan([a], a, at(28, 30)))
 })
 
 test('The day runs 6am to 6am: before 6am it is still the night before', () => {
@@ -989,4 +992,19 @@ test('shortDay: one letter for the weekday, then month/day', () => {
   assert.equal(shortDay('2026-10-06'), 'T 10/6')
   assert.equal(shortDay('2026-10-04'), 'S 10/4')
   assert.equal(shortDay('2026-01-15'), 'T 1/15')
+})
+
+test('One time divides the days: 5am by default, and Settings can move it', () => {
+  assert.deepEqual([DAY_START, DAY_END], [5, 29])
+  // 4:30am still belongs to the night before; 5:30am is the new day
+  assert.deepEqual(logicalNow(new Date(2026, 9, 7, 4, 30)), { day: '2026-10-06', hours: at(28, 30) })
+  assert.deepEqual(logicalNow(new Date(2026, 9, 7, 5, 30)), { day: '2026-10-07', hours: at(5, 30) })
+  assert.deepEqual(fromStored('2026-10-07', '04:45:00', '05:00:00'), { day: '2026-10-06', start: at(28, 45), end: 29 })
+  setDayStart(6)
+  try {
+    assert.deepEqual([DAY_START, DAY_END], [6, 30])
+    assert.deepEqual(logicalNow(new Date(2026, 9, 7, 5, 30)), { day: '2026-10-06', hours: at(29, 30) })
+  } finally {
+    setDayStart(5)
+  }
 })
