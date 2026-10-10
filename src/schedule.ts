@@ -515,6 +515,15 @@ export function quarterOf(hours: number) {
   return Math.round(hours * 4) / 4
 }
 
+// A drag down (or up) the agenda's add strip, from one hour to another -> the new
+// block's start and length: both ends on the quarter hour, at least 15 minutes,
+// inside the day
+export function dragSpan(from: number, to: number) {
+  const a = Math.min(Math.max(quarterOf(Math.min(from, to)), DAY_START), DAY_END - 0.25)
+  const b = Math.min(Math.max(quarterOf(Math.max(from, to)), a + 0.25), DAY_END)
+  return { start: a, minutes: Math.round((b - a) * 60) }
+}
+
 // A new todo put at a tapped time: the todos and habits starting from there on
 // are pushed along after it as far as they overlap. Ones before it, fixed habits
 // and older calendar blocks stay put. An event (evictOverlap) also pushes off a

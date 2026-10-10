@@ -98,6 +98,7 @@ import {
   DAY_START,
   DEFAULT_DAY_START,
   setDayStart,
+  dragSpan,
   SLEEP_TITLE,
   sleepStretches,
   sleepRows,
@@ -449,7 +450,7 @@ function DayPage({
     if (error) setError(error.message)
   }
   // The time tapped in the agenda's right strip, for a new todo there
-  const [addAt, setAddAt] = useState<number | null>(null)
+  const [addAt, setAddAt] = useState<{ start: number; minutes: number } | null>(null)
   // The routine timer that's running, if any (full page)
   const [routine, setRoutine] = useState<{ detail: Detail; steps: RoutineStep[]; index: number; stepStartedAt: number } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -1396,7 +1397,8 @@ function DayPage({
                 showNow={day === today}
                 onMore={(item, x, y) => setMenu({ item, x, y })}
                 onOpen={(item) => setDetail({ id: item.id, from: 'item', title: item.title, day, start: item.start, end: item.end, done: item.done, fixed: !!item.fixed, event: item.source === 'event', habitId: item.habitId ?? null, themeId: item.themeId ?? null })}
-                onAddAt={setAddAt}
+                onAddAt={(start, minutes) => setAddAt({ start, minutes })}
+                onDragging={setDragging}
               />
             )}
 
@@ -1558,7 +1560,7 @@ function DayPage({
         <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable style={styles.detailBackdrop} onPress={() => setAddAt(null)}>
             {addAt !== null ? (
-              <AddTodoCard at={addAt} onSave={addTodoAt} />
+              <AddTodoCard at={addAt.start} initialMinutes={addAt.minutes} onSave={addTodoAt} />
             ) : null}
           </Pressable>
         </KeyboardAvoidingView>
@@ -2855,16 +2857,19 @@ function SleepCard({
 // (centered on the tapped time) and Duration sliders as the todo card
 function AddTodoCard({
   at,
+  initialMinutes,
   onSave,
 }: {
   at: number
+  // An hour from a tap; a drag on the strip sets its own length
+  initialMinutes: number
   onSave: (title: string, start: number, minutes: number, as: 'todo' | 'done' | 'event') => void
 }) {
   // A todo, or an event (fixed: no rule moves it)
   const [mode, setMode] = useState<'todo' | 'event'>('todo')
   const [title, setTitle] = useState('')
   const [offset, setOffset] = useState(0)
-  const [minutes, setMinutes] = useState(60)
+  const [minutes, setMinutes] = useState(initialMinutes)
   const ready = title.trim().length > 0
   const startMin = Math.min(Math.max(Math.round(at * 60) + offset, 0), DAY_END * 60 - minutes)
   const start = startMin / 60
@@ -2913,7 +2918,7 @@ function AddTodoCard({
           style={styles.slider}
           value={minutes}
           minimumValue={SLIDER_STEP}
-          maximumValue={SLIDER_MAX}
+          maximumValue={Math.max(SLIDER_MAX, initialMinutes)}
           step={SLIDER_STEP}
           minimumTrackTintColor={c.accent}
           maximumTrackTintColor={c.line}
@@ -4226,13 +4231,17 @@ function DayGrid({
   onMore,
   onOpen,
   onAddAt,
+  onDragging,
 }: {
   items: CalItem[]
   showNow: boolean
   onMore: (item: CalItem, x: number, y: number) => void
   onOpen: (item: CalItem) => void
-  // A tap in the strip right of the cards, as an hour rounded to the quarter
-  onAddAt: (hour: number) => void
+  // The strip right of the cards: a tap is an hour at that quarter, a drag is
+  // the span dragged over (dragSpan)
+  onAddAt: (start: number, minutes: number) => void
+  // True while a drag is on, so the page doesn't scroll under it
+  onDragging: (dragging: boolean) => void
 }) {
   const nowHours = logicalNow(new Date()).hours
   // Every day, today included, runs from DAY_START to the next day's start; today
@@ -4249,6 +4258,46 @@ function DayGrid({
   const [gridWidth, setGridWidth] = useState(0)
   const column = Math.max(0, gridWidth - EVENT_LEFT - EVENT_RIGHT)
   const side = halfSides(visible, top, SHORT_MIN_PX)
+
+  // Drawing a new block on the strip: where the finger went down and where it is
+  const [draw, setDraw] = useState<{ from: number; to: number } | null>(null)
+  const drawFrom = useRef<number | null>(null)
+  const latest = useRef({ first, onAddAt, onDragging })
+  latest.current = { first, onAddAt, onDragging }
+  const strip = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
+        const from = latest.current.first + e.nativeEvent.locationY / HOUR_PX
+        latest.current.onDragging(true)
+        drawFrom.current = from
+        setDraw({ from, to: from })
+      },
+      onPanResponderMove: (_e, g) => {
+        const from = drawFrom.current
+        if (from !== null) setDraw({ from, to: from + g.dy / HOUR_PX })
+      },
+      onPanResponderRelease: (_e, g) => {
+        const from = drawFrom.current
+        drawFrom.current = null
+        latest.current.onDragging(false)
+        setDraw(null)
+        if (from === null) return
+        // Barely moved: a tap, an hour long as before
+        if (Math.abs(g.dy) < 8) return latest.current.onAddAt(quarterOf(from), 60)
+        const span = dragSpan(from, from + g.dy / HOUR_PX)
+        latest.current.onAddAt(span.start, span.minutes)
+      },
+      onPanResponderTerminate: () => {
+        drawFrom.current = null
+        latest.current.onDragging(false)
+        setDraw(null)
+      },
+    }),
+  ).current
+  const drawn = draw && Math.abs(draw.to - draw.from) * HOUR_PX >= 8 ? dragSpan(draw.from, draw.to) : null
 
   return (
     <View
@@ -4312,11 +4361,17 @@ function DayGrid({
           </Pressable>
         )
       })}
-      <Pressable
-        style={styles.addStrip}
-        onPress={(e) => onAddAt(quarterOf(first + e.nativeEvent.locationY / HOUR_PX))}
-        accessibilityLabel="Add a todo at this time"
-      />
+      {drawn ? (
+        <View
+          pointerEvents="none"
+          style={[styles.drawBlock, { top: top(drawn.start) + 1, height: Math.max(top(drawn.start + drawn.minutes / 60) - top(drawn.start) - 2, 12) }]}
+        >
+          <Text style={styles.eventTime}>
+            {clock(drawn.start)}–{clock(drawn.start + drawn.minutes / 60)}
+          </Text>
+        </View>
+      ) : null}
+      <View style={styles.addStrip} {...strip.panHandlers} accessibilityLabel="Add a todo at this time" />
       {showNow ? <View pointerEvents="none" style={[styles.nowLine, { top: top(nowHours) }]} /> : null}
     </View>
   )
@@ -4655,6 +4710,19 @@ const styles = StyleSheet.create({
     width: EVENT_RIGHT,
     borderLeftWidth: 1,
     borderLeftColor: c.line,
+  },
+  // The block being drawn on the add strip, before its card opens
+  drawBlock: {
+    position: 'absolute',
+    left: EVENT_LEFT,
+    right: EVENT_RIGHT,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: c.accent,
+    backgroundColor: c.event,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   nowLine: { position: 'absolute', left: 46, right: 0, height: 2, backgroundColor: c.now },
   input: { backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: 8, padding: 12, fontSize: 16, color: c.ink },

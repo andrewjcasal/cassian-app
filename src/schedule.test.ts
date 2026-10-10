@@ -14,6 +14,7 @@ import {
   fromStored,
   lastDays,
   setDayStart,
+  dragSpan,
   sleepStretches,
   sleepRows,
   sleepFromRows,
@@ -1060,3 +1061,24 @@ test('One time divides the days: 5am by default, and Settings can move it', () =
     const rows = sleepRows('2026-10-10', [{ sleep: -1, wake: 7 }])
     assert.deepEqual(sleepFromRows('2026-10-09', rows), [])
   })
+
+test('a drag on the add strip gives a quarter-hour start and length', () => {
+  setDayStart(5)
+  assert.deepEqual(dragSpan(14.1, 16.4), { start: 14, minutes: 150 })
+})
+
+test('a drag upward gives the same block as one downward', () => {
+  setDayStart(5)
+  assert.deepEqual(dragSpan(16.4, 14.1), { start: 14, minutes: 150 })
+})
+
+test('a tiny drag is still 15 minutes', () => {
+  setDayStart(5)
+  assert.deepEqual(dragSpan(9, 9.05), { start: 9, minutes: 15 })
+})
+
+test('a drag stays inside the day', () => {
+  setDayStart(5)
+  assert.deepEqual(dragSpan(4, 6), { start: 5, minutes: 60 })
+  assert.deepEqual(dragSpan(28, 30), { start: 28, minutes: 60 })
+})
