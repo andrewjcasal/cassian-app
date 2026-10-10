@@ -447,7 +447,7 @@ function DayPage({
     const id = help.find((g) => g.name === group)?.ids[option]
     if (!id) return
     const value = note.trim() || null
-    setHelp((list) => list.map((g) => (g.name === group ? { ...g, notes: { ...g.notes, [option]: value } } : g)))
+    setHelp((list) => list.map((g) => (g.name === group ? { ...g, notes: { ...(g.notes ?? {}), [option]: value } } : g)))
     const { error } = await supabase.from('cass_help_items').update({ note: value }).eq('id', id)
     if (error) setError(error.message)
   }
@@ -2190,7 +2190,11 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
 // The Help cards (Theo, Cat Fight...): tap one, pick an option, and it's put on
 // the agenda from now. They sit under Planning's Help Events.
 function HelpCards({ help, onTrack }: { help: HelpGroup[]; onTrack: (name: string, option: string) => void }) {
-  const [open, setOpen] = useState<HelpGroup | null>(null)
+  // Kept by name and looked up in the current list, so the card shows the latest
+  // options and notes rather than a copy from when it was tapped
+  const [openName, setOpenName] = useState<string | null>(null)
+  const open = help.find((g) => g.name === openName) ?? null
+  const setOpen = (g: HelpGroup | null) => setOpenName(g ? g.name : null)
 
   return (
     <>
@@ -2218,7 +2222,7 @@ function HelpCards({ help, onTrack }: { help: HelpGroup[]; onTrack: (name: strin
                   }}
                 >
                   <Text style={styles.doneButtonText}>{option}</Text>
-                  {open.notes[option] ? <Text style={styles.helpButtonNote}>{open.notes[option]}</Text> : null}
+                  {open.notes?.[option] ? <Text style={styles.helpButtonNote}>{open.notes[option]}</Text> : null}
                 </Pressable>
               ))}
             </View>
@@ -2423,7 +2427,7 @@ function HabitsScreen({
   const [noteDraft, setNoteDraft] = useState('')
   const closeSubEvent = () => {
     if (subEvent) {
-      const saved = help.find((g) => g.name === subEvent.name)?.notes[subEvent.option] ?? ''
+      const saved = help.find((g) => g.name === subEvent.name)?.notes?.[subEvent.option] ?? ''
       if (noteDraft.trim() !== saved) onHelpNote(subEvent.name, subEvent.option, noteDraft)
     }
     setSubEvent(null)
@@ -2641,13 +2645,13 @@ function HabitsScreen({
                           key={option}
                           style={[styles.todoRow, styles.subRow]}
                           onPress={() => {
-                            setNoteDraft(h.notes[option] ?? '')
+                            setNoteDraft(h.notes?.[option] ?? '')
                             setSubEvent({ name: h.name, option })
                           }}
                         >
                           <View style={{ flex: 1 }}>
                             <Text style={styles.todoText}>{option}</Text>
-                            {h.notes[option] ? <Text style={styles.helpNote}>{h.notes[option]}</Text> : null}
+                            {h.notes?.[option] ? <Text style={styles.helpNote}>{h.notes[option]}</Text> : null}
                           </View>
                           <Text style={styles.minutesLabel}>{h.minutes[option] ?? HELP_MINUTES} min</Text>
                         </Pressable>
