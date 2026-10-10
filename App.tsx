@@ -2386,6 +2386,18 @@ function HabitsScreen({
   // Help event a new sub-event is being added to
   const [addingSub, setAddingSub] = useState<string | null>(null)
   const [subName, setSubName] = useState('')
+  // A new Help event: its name and its first sub-event (a Help event is its sub-events)
+  const [addingHelp, setAddingHelp] = useState(false)
+  const [helpName, setHelpName] = useState('')
+  const [helpFirst, setHelpFirst] = useState('')
+  const helpReady = helpName.trim().length > 0 && helpFirst.trim().length > 0
+  const addHelp = () => {
+    if (!helpReady) return
+    const name = helpName.trim()
+    onAddHelpSub(name, helpFirst.trim())
+    setHelpExpanded((set) => new Set(set).add(name))
+    setAddingHelp(false)
+  }
   const [pickingHabit, setPickingHabit] = useState(false)
   const [helpExpanded, setHelpExpanded] = useState<Set<string>>(new Set())
   const [subEvent, setSubEvent] = useState<{ name: string; option: string } | null>(null)
@@ -2542,7 +2554,22 @@ function HabitsScreen({
 
         {/* Help Events: Planning only, not the Habits page */}
         <View style={showHabits ? styles.hidden : null}>
-          <Text style={styles.sectionLabel}>HELP EVENTS</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionLabel, { flex: 1 }]}>HELP EVENTS</Text>
+            <Pressable
+              style={styles.addButton}
+              onPress={() => {
+                setHelpName('')
+                setHelpFirst('')
+                setAddingHelp(true)
+              }}
+              hitSlop={8}
+              accessibilityLabel="Add a Help event"
+            >
+              <Plus size={16} color={c.accent} />
+              <Text style={styles.addButtonText}>Add</Text>
+            </Pressable>
+          </View>
           <View style={styles.card}>
             {help.map((h) => {
               const open = helpExpanded.has(h.name)
@@ -2635,6 +2662,38 @@ function HabitsScreen({
                 </Pressable>
               </View>
             ) : null}
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={addingHelp} transparent animationType="none" onRequestClose={() => setAddingHelp(false)}>
+        <KeyboardAvoidingView style={styles.screenFill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.detailBackdrop} onPress={() => setAddingHelp(false)}>
+            {/* Claims taps on the card so only the backdrop closes it */}
+            <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+              <Text style={styles.detailTitle}>New Help event</Text>
+              <TextInput
+                style={styles.input}
+                value={helpName}
+                onChangeText={setHelpName}
+                placeholder="Name (Theo)"
+                placeholderTextColor={c.muted}
+                autoFocus
+                returnKeyType="next"
+              />
+              <TextInput
+                style={styles.input}
+                value={helpFirst}
+                onChangeText={setHelpFirst}
+                placeholder="First event (Open window)"
+                placeholderTextColor={c.muted}
+                returnKeyType="done"
+                onSubmitEditing={addHelp}
+              />
+              <Pressable style={[styles.submitButton, !helpReady && styles.buttonDisabled]} disabled={!helpReady} onPress={addHelp}>
+                <Text style={[styles.doneButtonText, !helpReady && styles.buttonDisabledText]}>Add</Text>
+              </Pressable>
+            </View>
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
