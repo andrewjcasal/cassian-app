@@ -1016,8 +1016,10 @@ function DayPage({
   }
 
   // Starts a habit's routine timer from the picked step
-  // A habit's countdown on the Todos page (TIMERS), from its card's Start timer
-  const [timer, setTimer] = useState<{ detail: Detail; minutes: number; key: number } | null>(null)
+  // A habit's countdown (TIMERS), from its card's Start timer. It sits above the
+  // header on every page, and its time lives here so moving between pages keeps it:
+  // `used` is the time before the current run, `runningSince` null while paused.
+  const [timer, setTimer] = useState<{ detail: Detail; minutes: number; used: number; runningSince: number | null } | null>(null)
 
   const startRoutine = (d: Detail, stepName: string) => {
     const steps = routineFrom(ROUTINES[d.title] ?? [], stepName)
@@ -1181,6 +1183,29 @@ function DayPage({
 
   return (
     <View style={styles.screen}>
+      {timer ? (
+        <HabitTimer
+          minutes={timer.minutes}
+          used={timer.used}
+          runningSince={timer.runningSince}
+          onPause={() =>
+            setTimer((t) =>
+              !t
+                ? t
+                : t.runningSince === null
+                  ? { ...t, runningSince: Date.now() }
+                  : { ...t, used: t.used + Date.now() - t.runningSince, runningSince: null },
+            )
+          }
+          onReset={() => setTimer((t) => (t ? { ...t, used: 0, runningSince: t.runningSince === null ? null : Date.now() } : t))}
+          onDone={() => {
+            const d = timer.detail
+            setTimer(null)
+            doneNow(d)
+          }}
+          onClose={() => setTimer(null)}
+        />
+      ) : null}
       {/* Planning (habits) stays mounted, hidden on other tabs, so it's loaded before you open it */}
       <View style={tab === 'planning' ? styles.screenFill : styles.hidden}>
         <HabitsScreen
@@ -1317,18 +1342,6 @@ function DayPage({
                 today={today}
                 onOpen={openThemeStep}
                 onAdd={(title) => addThemeStep(openTheme.id, title)}
-              />
-            ) : null}
-            {tab === 'todos' && !openTheme && !allTodos && timer ? (
-              <HabitTimer
-                key={timer.key}
-                minutes={timer.minutes}
-                onDone={() => {
-                  const d = timer.detail
-                  setTimer(null)
-                  doneNow(d)
-                }}
-                onClose={() => setTimer(null)}
               />
             ) : null}
             {tab === 'todos' && !openTheme && !allTodos && overdue.length ? (
@@ -1520,7 +1533,7 @@ function DayPage({
               onStartRoutine={startRoutine}
               onStartTimer={(d) => {
                 setDetail(null)
-                setTimer({ detail: d, minutes: TIMERS[d.title], key: Date.now() })
+                setTimer({ detail: d, minutes: TIMERS[d.title], used: 0, runningSince: Date.now() })
               }}
               // Its recorded routine steps, already loaded with the day's blocks
               parts={(byDay[detail.day]?.items ?? [])
@@ -3820,37 +3833,40 @@ function DetailCard({
 }
 
 // "4:05" from milliseconds
-// A habit's countdown above OVERDUE, one row: the time, then Reset, Pause/Resume,
+// A habit's countdown above the header, one row: the time, then Reset, Pause/Resume,
 // Done (marks the habit done), and X (closes it, the habit stays as it was).
 // It stops at 0:00 and waits for Done.
-function HabitTimer({ minutes, onDone, onClose }: { minutes: number; onDone: () => void; onClose: () => void }) {
-  const total = minutes * 60_000
-  // Time used before the current run, and when the current run began (null = paused)
-  const [used, setUsed] = useState(0)
-  const [runningSince, setRunningSince] = useState<number | null>(() => Date.now())
+// The time is held by the page (used, runningSince); this only ticks the display.
+// Reset goes back to the full time and keeps it running or paused as it was.
+function HabitTimer({
+  minutes,
+  used,
+  runningSince,
+  onPause,
+  onReset,
+  onDone,
+  onClose,
+}: {
+  minutes: number
+  used: number
+  runningSince: number | null
+  onPause: () => void
+  onReset: () => void
+  onDone: () => void
+  onClose: () => void
+}) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
+    setNow(Date.now())
     if (runningSince === null) return
     const id = setInterval(() => setNow(Date.now()), 250)
     return () => clearInterval(id)
   }, [runningSince])
-  const left = total - used - (runningSince === null ? 0 : now - runningSince)
-  const pause = () => {
-    if (runningSince === null) return setRunningSince(Date.now())
-    setUsed((u) => u + Date.now() - runningSince)
-    setRunningSince(null)
-  }
-  // Back to the full time; a running timer keeps running, a paused one stays paused
-  const reset = () => {
-    setUsed(0)
-    if (runningSince !== null) {
-      const t = Date.now()
-      setRunningSince(t)
-      setNow(t)
-    }
-  }
+  const left = minutes * 60_000 - used - (runningSince === null ? 0 : Math.max(0, now - runningSince))
+  const reset = onReset
+  const pause = onPause
   return (
-    <View style={[styles.card, styles.habitTimer]}>
+    <View style={styles.habitTimer}>
       <Text style={styles.habitTimerClock}>{left > 0 ? mmss(left) : "Time's up"}</Text>
       <Pressable style={styles.habitTimerButton} onPress={reset}>
         <Text style={styles.doneButtonText}>Reset</Text>
@@ -4713,7 +4729,16 @@ const styles = StyleSheet.create({
   helpNote: { fontSize: 14, color: c.muted, marginTop: 2 },
   helpButtonNote: { fontSize: 14, color: '#ffffff', marginTop: 2, textAlign: 'center' },
   stepCards: { flexDirection: 'row', gap: 6 },
-  habitTimer: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 10, marginTop: 8 },
+  habitTimer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: c.card,
+    borderBottomWidth: 1,
+    borderBottomColor: c.line,
+  },
   habitTimerClock: { flex: 1, fontSize: 24, fontWeight: '600', color: c.ink, fontVariant: ['tabular-nums'] },
   habitTimerButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: c.accent },
   stepCard: {
