@@ -999,6 +999,9 @@ function DayPage({
   }
 
   // Starts a habit's routine timer from the picked step
+  // A habit's countdown on the Todos page (TIMERS), from its card's Start timer
+  const [timer, setTimer] = useState<{ detail: Detail; minutes: number; key: number } | null>(null)
+
   const startRoutine = (d: Detail, stepName: string) => {
     const steps = routineFrom(ROUTINES[d.title] ?? [], stepName)
     if (!steps.length) return
@@ -1298,6 +1301,18 @@ function DayPage({
                 onAdd={(title) => addThemeStep(openTheme.id, title)}
               />
             ) : null}
+            {tab === 'todos' && !openTheme && !allTodos && timer ? (
+              <HabitTimer
+                key={timer.key}
+                title={timer.detail.title}
+                minutes={timer.minutes}
+                onDone={() => {
+                  const d = timer.detail
+                  setTimer(null)
+                  doneNow(d)
+                }}
+              />
+            ) : null}
             {tab === 'todos' && !openTheme && !allTodos && overdue.length ? (
               <>
                 <Text style={[styles.sectionLabel, styles.overdueLabel]}>OVERDUE</Text>
@@ -1484,6 +1499,10 @@ function DayPage({
               onDoneNow={doneNow}
               onDoneAtEnd={doneAtScheduledEnd}
               onStartRoutine={startRoutine}
+              onStartTimer={(d) => {
+                setDetail(null)
+                setTimer({ detail: d, minutes: TIMERS[d.title], key: Date.now() })
+              }}
               // Its recorded routine steps, already loaded with the day's blocks
               parts={(byDay[detail.day]?.items ?? [])
                 .filter((it) => it.processId === detail.id)
@@ -1610,6 +1629,13 @@ const ROUTINES: Record<string, RoutineStep[]> = {
     // Reaching Puzzles means the chores are done
     { name: 'Puzzles', minutes: 5, afterChores: true },
   ],
+}
+
+// Habits whose card has a Start timer button instead of step cards. The timer
+// runs on the Todos page above OVERDUE for this many minutes; its Done marks the
+// habit done. Set here in code.
+const TIMERS: Record<string, number> = {
+  'Todoist Overdues': 5,
 }
 
 // A full page shown in a Modal. SafeAreaView can get no insets inside a Modal,
@@ -3197,6 +3223,7 @@ function DetailCard({
   onDoneNow,
   onDoneAtEnd,
   onStartRoutine,
+  onStartTimer,
   parts,
   help,
   onMoveToDay,
@@ -3214,6 +3241,8 @@ function DetailCard({
   onDoneNow: (detail: Detail) => void
   onDoneAtEnd: (detail: Detail) => void
   onStartRoutine: (detail: Detail, step: string) => void
+  // The Start timer button, for habits in TIMERS
+  onStartTimer: (detail: Detail) => void
   // Recorded routine steps under this block
   parts: { id: string; title: string; start: number; end: number }[]
   help: HelpGroup[]
@@ -3628,7 +3657,11 @@ function DetailCard({
             />
           </View>
 
-          {routineSteps.length ? (
+          {TIMERS[detail.title] && !detail.done ? (
+            <Pressable style={styles.submitButton} onPress={() => onStartTimer(detail)}>
+              <Text style={styles.doneButtonText}>Start timer</Text>
+            </Pressable>
+          ) : routineSteps.length ? (
             <View style={styles.stepCards}>
               {routineSteps.map((step) => (
                 <Pressable
@@ -3674,6 +3707,41 @@ function DetailCard({
 }
 
 // "4:05" from milliseconds
+// A habit's countdown above OVERDUE: Pause/Resume, and Done marks the habit done.
+// It stops at 0:00 and waits for Done.
+function HabitTimer({ title, minutes, onDone }: { title: string; minutes: number; onDone: () => void }) {
+  const total = minutes * 60_000
+  // Time used before the current run, and when the current run began (null = paused)
+  const [used, setUsed] = useState(0)
+  const [runningSince, setRunningSince] = useState<number | null>(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (runningSince === null) return
+    const id = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(id)
+  }, [runningSince])
+  const left = total - used - (runningSince === null ? 0 : now - runningSince)
+  const pause = () => {
+    if (runningSince === null) return setRunningSince(Date.now())
+    setUsed((u) => u + Date.now() - runningSince)
+    setRunningSince(null)
+  }
+  return (
+    <View style={[styles.card, styles.habitTimer]}>
+      <Text style={styles.habitTimerTitle}>{title}</Text>
+      <Text style={styles.habitTimerClock}>{left > 0 ? mmss(left) : "Time's up"}</Text>
+      <View style={styles.doneRow}>
+        <Pressable style={styles.doneButton} onPress={pause}>
+          <Text style={styles.doneButtonText}>{runningSince === null ? 'Resume' : 'Pause'}</Text>
+        </Pressable>
+        <Pressable style={styles.doneButton} onPress={onDone}>
+          <Text style={styles.doneButtonText}>Done</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
 function mmss(ms: number) {
   const total = Math.max(0, Math.round(ms / 1000))
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
@@ -4467,6 +4535,9 @@ const styles = StyleSheet.create({
   chartCard: { marginBottom: 12 },
   helpCardText: { fontSize: 16, fontWeight: '600', color: c.ink },
   stepCards: { flexDirection: 'row', gap: 6 },
+  habitTimer: { padding: 12, gap: 4, marginTop: 8, alignItems: 'stretch' },
+  habitTimerTitle: { fontSize: 16, fontWeight: '600', color: c.ink },
+  habitTimerClock: { fontSize: 32, fontWeight: '600', color: c.ink, fontVariant: ['tabular-nums'], textAlign: 'center' },
   stepCard: {
     flex: 1,
     alignItems: 'center',
