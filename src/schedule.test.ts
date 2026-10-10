@@ -14,6 +14,8 @@ import {
   fromStored,
   lastDays,
   setDayStart,
+  nextDueWeek,
+  shiftMonths,
   paperOrder,
   placeSteps,
   dragSpan,
@@ -1120,4 +1122,38 @@ test("Original lists a theme's steps in the paper's order, done or not, hand-add
     paperOrder(steps).map((s) => s.title),
     ['first line', 'third line', 'by hand sooner', 'by hand later'],
   )
+})
+
+test('a monthly date on the 31st lands on the last day of a shorter month', () => {
+  assert.equal(shiftMonths('2026-01-31', 1), '2026-02-28')
+  assert.equal(shiftMonths('2026-10-04', 3), '2027-01-04')
+})
+
+test('weekly, every 2 and every 3 weeks come back that many weeks on', () => {
+  assert.equal(nextDueWeek('weekly', '2026-10-04'), '2026-10-11')
+  assert.equal(nextDueWeek('every_2_weeks', '2026-10-04'), '2026-10-18')
+  assert.equal(nextDueWeek('every_3_weeks', '2026-10-04'), '2026-10-25')
+})
+
+test('monthly comes back the week holding the same date a month on', () => {
+  // Nov 4 is in the week of Sunday Nov 1
+  assert.equal(nextDueWeek('monthly', '2026-10-04'), '2026-11-01')
+  assert.equal(nextDueWeek('every_3_months', '2026-10-04'), '2027-01-03')
+})
+
+test('an every 2 weeks habit lands on its weekday only once two weeks have passed', () => {
+  const habit = { id: 'h', frequency: 'every_2_weeks' as const, weekday: 0 }
+  const placed = [{ habit_id: 'h', logical_day: '2026-10-04', habit_week: '2026-10-04' }]
+  assert.equal(habitsForDay([habit], '2026-10-11', placed).length, 0)
+  assert.equal(habitsForDay([habit], '2026-10-18', placed).length, 1)
+  // Never placed: due on its first weekday
+  assert.equal(habitsForDay([habit], '2026-10-11', []).length, 1)
+})
+
+test('a monthly habit skips the weeks in between', () => {
+  const habit = { id: 'h', frequency: 'monthly' as const, weekday: 6 }
+  const placed = [{ habit_id: 'h', logical_day: '2026-10-10', habit_week: '2026-10-04' }]
+  assert.equal(habitsForDay([habit], '2026-10-24', placed).length, 0)
+  assert.equal(habitsForDay([habit], '2026-10-31', placed).length, 0)
+  assert.equal(habitsForDay([habit], '2026-11-07', placed).length, 1)
 })

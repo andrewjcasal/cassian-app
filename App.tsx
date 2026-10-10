@@ -111,6 +111,9 @@ import {
   DAY_START,
   DEFAULT_DAY_START,
   setDayStart,
+  type Frequency,
+  FREQUENCIES,
+  frequencyLabel,
   paperOrder,
   placeSteps,
   PHOTO_TODO_MINUTES,
@@ -751,12 +754,14 @@ function DayPage({
       }
       const from = habitSearchFrom(day, today, nowHours())
       if (from === null) return false
-      // A weekly habit already placed elsewhere this week (Sunday to Saturday) isn't placed again
+      // Where each weekly-or-longer habit was last placed (habit_week), going back
+      // past the longest gap (every 3 months), so habitsForDay can tell if it's due
       const week = weekStart(day)
       const { data: weekBlocks } = await supabase
         .from('cass_time_blocks')
         .select('habit_id,logical_day,habit_week')
-        .eq('habit_week', week)
+        .gte('habit_week', shiftDay(week, -7 * 16))
+        .lte('habit_week', week)
       const forDay = habitsForDay(
         habits ?? [],
         day,
@@ -817,7 +822,7 @@ function DayPage({
       if (loadRuns.current.get(d) !== run) return
       // Todos, and weekly habits (a missed daily habit just comes back tomorrow)
       const dayOverdue = (overdueRes.data ?? [])
-        .filter((t) => t.source === 'app' || habitFrequency(t.cass_habits) === 'weekly')
+        .filter((t) => t.source === 'app' || habitFrequency(t.cass_habits) !== 'daily')
         .map((t) => {
           const { day: logicalDay, start, end } = fromStored(t.day, t.start_time, t.end_time)
           return { id: t.id, title: t.title, day: logicalDay, start, end, habit: !!t.habit_id, habitId: t.habit_id, themeId: t.theme_id }
@@ -1722,7 +1727,7 @@ type Habit = {
   id: string
   title: string
   minutes: number
-  frequency: 'daily' | 'weekly'
+  frequency: Frequency
   weekday: number | null
   // A set time of day ("23:00:00"), or null to go in the first free gap
   start_time: string | null
@@ -2674,6 +2679,7 @@ function HabitsScreen({
   const sections = [
     { title: 'DAILY HABITS', list: habits.filter((h) => h.frequency === 'daily') },
     { title: 'WEEKLY HABITS', list: habits.filter((h) => h.frequency === 'weekly') },
+    { title: 'LESS OFTEN', list: habits.filter((h) => h.frequency !== 'daily' && h.frequency !== 'weekly') },
   ]
   // The Habits page, opened from Planning's Habits row
   const [showHabits, setShowHabits] = useState(false)
@@ -2706,6 +2712,7 @@ function HabitsScreen({
               <Text style={[styles.todoText, { flex: 1 }]}>Habits</Text>
               <Text style={styles.minutesLabel}>
                 {sections[0].list.length} daily · {sections[1].list.length} weekly
+                {sections[2].list.length ? ` · ${sections[2].list.length} less often` : ''}
               </Text>
               <ChevronRight size={18} color={c.muted} />
             </Pressable>
@@ -2719,8 +2726,11 @@ function HabitsScreen({
                 list.map((h) => (
                   <Pressable key={h.id} style={styles.todoRow} onPress={() => setSelected(h)}>
                     <Text style={[styles.todoText, { flex: 1 }]}>{h.title}</Text>
-                    {h.frequency === 'weekly' ? (
-                      <Text style={styles.minutesLabel}>{h.weekday === null ? 'Pick a day' : WEEKDAY_NAMES[h.weekday]}</Text>
+                    {h.frequency !== 'daily' ? (
+                      <Text style={styles.minutesLabel}>
+                        {h.frequency === 'weekly' ? '' : `${frequencyLabel(h.frequency)} · `}
+                        {h.weekday === null ? 'Pick a day' : WEEKDAY_NAMES[h.weekday]}
+                      </Text>
                     ) : null}
                     <Text style={styles.minutesLabel}>
                       {h.use_average
@@ -3151,7 +3161,42 @@ function AddTodoCard({
   )
 }
 
-// A new habit: name, how long it takes, and daily or weekly (with its day)
+// How often a habit comes back: a dropdown of FREQUENCIES (Daily through Every 3 months)
+function FrequencyPicker({ value, onChange }: { value: Frequency; onChange: (f: Frequency) => void }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <View style={styles.sliderRow}>
+        <Text style={styles.sliderLabel}>Repeats</Text>
+        <Pressable style={styles.dropdown} onPress={() => setOpen(!open)} accessibilityLabel="How often">
+          <Text style={styles.dropdownText}>{frequencyLabel(value)}</Text>
+          <ChevronDown size={16} color={c.muted} />
+        </Pressable>
+      </View>
+      {open ? (
+        <ScrollView style={styles.dropdownList} nestedScrollEnabled>
+          {FREQUENCIES.map((f) => {
+            const active = f.value === value
+            return (
+              <Pressable
+                key={f.value}
+                style={[styles.dropdownItem, active && styles.segmentItemActive]}
+                onPress={() => {
+                  setOpen(false)
+                  if (!active) onChange(f.value)
+                }}
+              >
+                <Text style={[styles.dropdownText, active && styles.segmentTextActive]}>{f.label}</Text>
+              </Pressable>
+            )
+          })}
+        </ScrollView>
+      ) : null}
+    </>
+  )
+}
+
+// A new habit: name, how long it takes, how often (with its day unless daily)
 function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }) {
   const [title, setTitle] = useState('')
   const [minutes, setMinutes] = useState(15)
@@ -3190,25 +3235,8 @@ function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }
           })}
         </View>
       </View>
-      <View style={styles.segment}>
-        {(['daily', 'weekly'] as const).map((f) => {
-          const active = frequency === f
-          return (
-            <Pressable
-              key={f}
-              style={[styles.segmentItem, active && styles.segmentItemActive]}
-              onPress={() => setFrequency(f)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-            >
-              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                {f === 'daily' ? 'Daily' : 'Weekly'}
-              </Text>
-            </Pressable>
-          )
-        })}
-      </View>
-      {frequency === 'weekly' ? (
+      <FrequencyPicker value={frequency} onChange={setFrequency} />
+      {frequency !== 'daily' ? (
         <>
           <Text style={styles.historySummary}>Which day?</Text>
           <View style={styles.weekdays}>
@@ -3234,7 +3262,7 @@ function AddHabitCard({ onSave }: { onSave: (draft: Omit<Habit, 'id'>) => void }
         style={[styles.submitButton, !ready && styles.buttonDisabled]}
         disabled={!ready}
         onPress={() =>
-          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'weekly' ? weekday : null, start_time: null, use_average: false })
+          onSave({ title: title.trim(), minutes, frequency, weekday: frequency === 'daily' ? null : weekday, start_time: null, use_average: false })
         }
       >
         <Text style={[styles.doneButtonText, !ready && styles.buttonDisabledText]}>Add habit</Text>
@@ -3261,7 +3289,12 @@ function HabitHistory({
   related: { title: string; day: string; start: number; end: number }[]
 }) {
   const [pickingStart, setPickingStart] = useState(false)
-  const rows = habitHistory(blocks, today, habit.frequency === 'weekly' ? habit.weekday : null)
+  const rows = habitHistory(
+    blocks,
+    today,
+    habit.frequency === 'weekly' ? habit.weekday : null,
+    habit.frequency !== 'daily' && habit.frequency !== 'weekly',
+  )
   // Duration: avg sets it to the last 5 runs' average (averageMinutes); the slider
   // shows where it's going while dragging and saves on release
   const avg = averageMinutes(blocks.map((b) => ({ ...b, day: b.logical_day })), 5)
@@ -3275,25 +3308,8 @@ function HabitHistory({
     // Claims taps on the card so only the backdrop closes it
     <View style={[styles.detailCard, styles.historyCard]} onStartShouldSetResponder={() => true}>
       <Text style={styles.detailTitle}>{habit.title}</Text>
-      <View style={styles.segment}>
-        {(['daily', 'weekly'] as const).map((f) => {
-          const active = habit.frequency === f
-          return (
-            <Pressable
-              key={f}
-              style={[styles.segmentItem, active && styles.segmentItemActive]}
-              onPress={() => !active && onSchedule(habit, f, habit.weekday)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-            >
-              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                {f === 'daily' ? 'Daily' : 'Weekly'}
-              </Text>
-            </Pressable>
-          )
-        })}
-      </View>
-      {habit.frequency === 'weekly' ? (
+      <FrequencyPicker value={habit.frequency} onChange={(f) => onSchedule(habit, f, habit.weekday)} />
+      {habit.frequency !== 'daily' ? (
         <>
           <Text style={styles.historySummary}>Which day?</Text>
           <View style={styles.weekdays}>
@@ -3303,7 +3319,7 @@ function HabitHistory({
                 <Pressable
                   key={label}
                   style={[styles.weekday, active && styles.segmentItemActive]}
-                  onPress={() => !active && onSchedule(habit, 'weekly', i)}
+                  onPress={() => !active && onSchedule(habit, habit.frequency, i)}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   accessibilityLabel={WEEKDAY_NAMES[i]}
@@ -3389,7 +3405,7 @@ function HabitHistory({
                   <X size={18} color={c.muted} />
                 )}
                 <Text style={[styles.todoText, { flex: 1 }]}>
-                  {habit.frequency === 'weekly' ? `Week of ${dayLabel(r.day)}` : r.day === today ? 'Today' : dayLabel(r.day)}
+                  {habit.frequency !== 'daily' ? `Week of ${dayLabel(r.day)}` : r.day === today ? 'Today' : dayLabel(r.day)}
                 </Text>
                 <Text style={styles.minutesLabel}>
                   {r.status === 'done'
