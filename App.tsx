@@ -1310,7 +1310,6 @@ function DayPage({
             {tab === 'todos' && !openTheme && !allTodos && timer ? (
               <HabitTimer
                 key={timer.key}
-                title={timer.detail.title}
                 minutes={timer.minutes}
                 onDone={() => {
                   const d = timer.detail
@@ -3713,9 +3712,9 @@ function DetailCard({
 }
 
 // "4:05" from milliseconds
-// A habit's countdown above OVERDUE: Pause/Resume, and Done marks the habit done.
-// It stops at 0:00 and waits for Done.
-function HabitTimer({ title, minutes, onDone }: { title: string; minutes: number; onDone: () => void }) {
+// A habit's countdown above OVERDUE, one row: the time, then Reset, Pause/Resume,
+// and Done (marks the habit done). It stops at 0:00 and waits for Done.
+function HabitTimer({ minutes, onDone }: { minutes: number; onDone: () => void }) {
   const total = minutes * 60_000
   // Time used before the current run, and when the current run began (null = paused)
   const [used, setUsed] = useState(0)
@@ -3732,18 +3731,27 @@ function HabitTimer({ title, minutes, onDone }: { title: string; minutes: number
     setUsed((u) => u + Date.now() - runningSince)
     setRunningSince(null)
   }
+  // Back to the full time; a running timer keeps running, a paused one stays paused
+  const reset = () => {
+    setUsed(0)
+    if (runningSince !== null) {
+      const t = Date.now()
+      setRunningSince(t)
+      setNow(t)
+    }
+  }
   return (
     <View style={[styles.card, styles.habitTimer]}>
-      <Text style={styles.habitTimerTitle}>{title}</Text>
       <Text style={styles.habitTimerClock}>{left > 0 ? mmss(left) : "Time's up"}</Text>
-      <View style={styles.doneRow}>
-        <Pressable style={styles.doneButton} onPress={pause}>
-          <Text style={styles.doneButtonText}>{runningSince === null ? 'Resume' : 'Pause'}</Text>
-        </Pressable>
-        <Pressable style={styles.doneButton} onPress={onDone}>
-          <Text style={styles.doneButtonText}>Done</Text>
-        </Pressable>
-      </View>
+      <Pressable style={styles.habitTimerButton} onPress={reset}>
+        <Text style={styles.doneButtonText}>Reset</Text>
+      </Pressable>
+      <Pressable style={styles.habitTimerButton} onPress={pause}>
+        <Text style={styles.doneButtonText}>{runningSince === null ? 'Resume' : 'Pause'}</Text>
+      </Pressable>
+      <Pressable style={styles.habitTimerButton} onPress={onDone}>
+        <Text style={styles.doneButtonText}>Done</Text>
+      </Pressable>
     </View>
   )
 }
@@ -4541,9 +4549,9 @@ const styles = StyleSheet.create({
   chartCard: { marginBottom: 12 },
   helpCardText: { fontSize: 16, fontWeight: '600', color: c.ink },
   stepCards: { flexDirection: 'row', gap: 6 },
-  habitTimer: { padding: 12, gap: 4, marginTop: 8, alignItems: 'stretch' },
-  habitTimerTitle: { fontSize: 16, fontWeight: '600', color: c.ink },
-  habitTimerClock: { fontSize: 32, fontWeight: '600', color: c.ink, fontVariant: ['tabular-nums'], textAlign: 'center' },
+  habitTimer: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 10, marginTop: 8 },
+  habitTimerClock: { flex: 1, fontSize: 24, fontWeight: '600', color: c.ink, fontVariant: ['tabular-nums'] },
+  habitTimerButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: c.accent },
   stepCard: {
     flex: 1,
     alignItems: 'center',
