@@ -415,18 +415,19 @@ function DayPage({
   const loadHelp = useCallback(async () => {
     const { data, error } = await supabase
       .from('cass_help_items')
-      .select('id,group_name,name,minutes,habit_id')
+      .select('id,group_name,name,minutes,habit_id,note')
       .order('created_at')
       .order('sort_order')
     if (error) return setError(error.message)
     const groups: HelpGroup[] = []
     for (const row of data ?? []) {
       let g = groups.find((x) => x.name === row.group_name)
-      if (!g) groups.push((g = { name: row.group_name, options: [], minutes: {}, ids: {}, habits: {} }))
+      if (!g) groups.push((g = { name: row.group_name, options: [], minutes: {}, ids: {}, habits: {}, notes: {} }))
       g.options.push(row.name)
       g.minutes[row.name] = row.minutes
       g.ids[row.name] = row.id
       g.habits[row.name] = row.habit_id
+      g.notes[row.name] = row.note
     }
     setHelp(groups)
   }, [])
@@ -440,6 +441,15 @@ function DayPage({
       .insert({ group_name: group, name, minutes: HELP_MINUTES, sort_order: count + 1 })
     if (error) return setError(error.message)
     loadHelp()
+  }
+  // A Help sub-event's note (what to do), saved as typed; empty clears it
+  const setHelpNote = async (group: string, option: string, note: string) => {
+    const id = help.find((g) => g.name === group)?.ids[option]
+    if (!id) return
+    const value = note.trim() || null
+    setHelp((list) => list.map((g) => (g.name === group ? { ...g, notes: { ...g.notes, [option]: value } } : g)))
+    const { error } = await supabase.from('cass_help_items').update({ note: value }).eq('id', id)
+    if (error) setError(error.message)
   }
   // Ties a Help sub-event to a habit (or none), so the habit's card lists it
   const setHelpHabit = async (group: string, option: string, habitId: string | null) => {
@@ -1179,6 +1189,7 @@ function DayPage({
           help={help}
           onAddHelpSub={addHelpSub}
           onHelpHabit={setHelpHabit}
+          onHelpNote={setHelpNote}
           onTrack={trackHelp}
           onSettings={openSettings}
         />
@@ -1623,6 +1634,8 @@ type HelpGroup = {
   // Each sub-event's row id, and the habit it's tied to (if any)
   ids: Record<string, string>
   habits: Record<string, string | null>
+  // What to do for each sub-event ("Call his name and make kissy noises")
+  notes: Record<string, string | null>
 }
 // How long a new sub-event starts out; a tracked event's Duration slider changes it
 const HELP_MINUTES = 5
@@ -2205,6 +2218,7 @@ function HelpCards({ help, onTrack }: { help: HelpGroup[]; onTrack: (name: strin
                   }}
                 >
                   <Text style={styles.doneButtonText}>{option}</Text>
+                  {open.notes[option] ? <Text style={styles.helpButtonNote}>{open.notes[option]}</Text> : null}
                 </Pressable>
               ))}
             </View>
@@ -2367,12 +2381,14 @@ function HabitsScreen({
   help,
   onAddHelpSub,
   onHelpHabit,
+  onHelpNote,
   onTrack,
   onSettings,
 }: {
   help: HelpGroup[]
   onAddHelpSub: (group: string, name: string) => void
   onHelpHabit: (group: string, option: string, habitId: string | null) => void
+  onHelpNote: (group: string, option: string, note: string) => void
   // The Help cards under Help Events: tap one, pick an option, and it's tracked
   onTrack: (name: string, option: string) => void
   // Whether the Habits tab is showing; opening it refreshes in the background
@@ -2403,6 +2419,15 @@ function HabitsScreen({
   const [pickingHabit, setPickingHabit] = useState(false)
   const [helpExpanded, setHelpExpanded] = useState<Set<string>>(new Set())
   const [subEvent, setSubEvent] = useState<{ name: string; option: string } | null>(null)
+  // The open sub-event's note as typed; saved when its card closes, if it changed
+  const [noteDraft, setNoteDraft] = useState('')
+  const closeSubEvent = () => {
+    if (subEvent) {
+      const saved = help.find((g) => g.name === subEvent.name)?.notes[subEvent.option] ?? ''
+      if (noteDraft.trim() !== saved) onHelpNote(subEvent.name, subEvent.option, noteDraft)
+    }
+    setSubEvent(null)
+  }
   // Every tracked Help event, by its title ("Theo: Open window"), loaded with the list
   const [helpHistory, setHelpHistory] = useState<Map<string, { day: string; start: number; end: number }[]>>(new Map())
   // Every habit's blocks, loaded with the list so a habit's history is ready the
@@ -2615,9 +2640,15 @@ function HabitsScreen({
                         <Pressable
                           key={option}
                           style={[styles.todoRow, styles.subRow]}
-                          onPress={() => setSubEvent({ name: h.name, option })}
+                          onPress={() => {
+                            setNoteDraft(h.notes[option] ?? '')
+                            setSubEvent({ name: h.name, option })
+                          }}
                         >
-                          <Text style={[styles.todoText, { flex: 1 }]}>{option}</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.todoText}>{option}</Text>
+                            {h.notes[option] ? <Text style={styles.helpNote}>{h.notes[option]}</Text> : null}
+                          </View>
                           <Text style={styles.minutesLabel}>{h.minutes[option] ?? HELP_MINUTES} min</Text>
                         </Pressable>
                       ))
@@ -2700,8 +2731,8 @@ function HabitsScreen({
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal visible={subEvent !== null} transparent animationType="none" onRequestClose={() => setSubEvent(null)}>
-        <Pressable style={styles.detailBackdrop} onPress={() => setSubEvent(null)}>
+      <Modal visible={subEvent !== null} transparent animationType="none" onRequestClose={closeSubEvent}>
+        <Pressable style={styles.detailBackdrop} onPress={closeSubEvent}>
           {subEvent ? (
             // Claims taps on the card so only the backdrop closes it
             <View style={[styles.detailCard, styles.historyCard]} onStartShouldSetResponder={() => true}>
@@ -2710,6 +2741,14 @@ function HabitsScreen({
                 {subEvent.name} ·{' '}
                 {help.find((g) => g.name === subEvent.name)?.minutes[subEvent.option] ?? HELP_MINUTES} min to start
               </Text>
+              <TextInput
+                style={[styles.addInput, styles.noteInput, { flex: 0 }]}
+                value={noteDraft}
+                onChangeText={setNoteDraft}
+                placeholder="Add a note"
+                placeholderTextColor={c.muted}
+                multiline
+              />
               {(() => {
                 const habitId = help.find((g) => g.name === subEvent.name)?.habits[subEvent.option] ?? null
                 const current = habits.find((h) => h.id === habitId)
@@ -4667,6 +4706,8 @@ const styles = StyleSheet.create({
   helpCards: { marginTop: 12 },
   chartCard: { marginBottom: 12 },
   helpCardText: { fontSize: 16, fontWeight: '600', color: c.ink },
+  helpNote: { fontSize: 14, color: c.muted, marginTop: 2 },
+  helpButtonNote: { fontSize: 14, color: '#ffffff', marginTop: 2, textAlign: 'center' },
   stepCards: { flexDirection: 'row', gap: 6 },
   habitTimer: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 10, marginTop: 8 },
   habitTimerClock: { flex: 1, fontSize: 24, fontWeight: '600', color: c.ink, fontVariant: ['tabular-nums'] },
