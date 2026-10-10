@@ -807,3 +807,76 @@ export function shortDay(day: string) {
   const [y, m, d] = day.split('-').map(Number)
   return `${'SMTWTFS'[new Date(y, m - 1, d).getDay()]} ${m}/${d}`
 }
+
+// Sleep: the night leading into a day, as one or more sleep/wake stretches (the
+// cats wake you, you go back to sleep). Each is saved as a 'Sleep' event.
+export const SLEEP_TITLE = 'Sleep'
+// A night longer than this is a typo, not a night
+export const SLEEP_MAX_HOURS = 18
+
+// Clock times (0-24) in order -> hours from the day's midnight. The first sleep
+// time is the evening before if it's pm, this morning if it's am; every time after
+// it is the next one on the clock.
+export function sleepStretches(
+  clockTimes: { sleep: number; wake: number }[],
+): { stretches: { sleep: number; wake: number }[] } | { error: string } {
+  const out: { sleep: number; wake: number }[] = []
+  let prev: number | null = null
+  const after = (t: number) => {
+    if (prev === null) return t >= 12 ? t - 24 : t
+    let v = t
+    while (v <= prev + EPS) v += 24
+    while (v - 24 > prev + EPS) v -= 24
+    return v
+  }
+  for (const { sleep, wake } of clockTimes) {
+    const s = after(sleep)
+    prev = s
+    const w = after(wake)
+    prev = w
+    out.push({ sleep: s, wake: w })
+  }
+  if (out.length && out[out.length - 1].wake - out[0].sleep > SLEEP_MAX_HOURS + EPS) {
+    return { error: `That's more than ${SLEEP_MAX_HOURS} hours of night. Check the times.` }
+  }
+  return { stretches: out }
+}
+
+// Stretches (hours from `day`'s midnight) -> rows to store. A stretch crossing
+// DAY_START is split there, so each day's agenda shows its own part.
+export function sleepRows(day: string, stretches: { sleep: number; wake: number }[]) {
+  const rows: { day: string; start_time: string; end_time: string }[] = []
+  for (const { sleep, wake } of stretches) {
+    let from = sleep
+    while (from < wake - EPS) {
+      const offset = Math.floor((from - DAY_START + EPS) / 24)
+      const to = Math.min(wake, DAY_START + 24 * (offset + 1))
+      const logical = shiftDay(day, offset)
+      rows.push(toStored(logical, from - 24 * offset, to - 24 * offset))
+      from = to
+    }
+  }
+  return rows
+}
+
+// The reverse, for reopening the sheet: stored Sleep rows -> the night's stretches
+// as clock times. Rows from noon the day before to noon on `day` count, and parts
+// split at DAY_START join back up.
+export function sleepFromRows(day: string, rows: { day: string; start_time: string; end_time: string | null }[]) {
+  const spans = rows
+    .map((r) => {
+      const { day: logical, start, end } = fromStored(r.day, r.start_time, r.end_time)
+      const base = logical === day ? 0 : logical === shiftDay(day, -1) ? -24 : null
+      return base === null ? null : { sleep: base + start, wake: base + end }
+    })
+    .filter((s): s is { sleep: number; wake: number } => s !== null && s.sleep >= -12 - EPS && s.sleep < 12 - EPS)
+    .sort((a, b) => a.sleep - b.sleep)
+  const merged: { sleep: number; wake: number }[] = []
+  for (const s of spans) {
+    const last = merged[merged.length - 1]
+    if (last && Math.abs(last.wake - s.sleep) < EPS) last.wake = s.wake
+    else merged.push({ ...s })
+  }
+  const onClock = (h: number) => ((h % 24) + 24) % 24
+  return merged.map((s) => ({ sleep: onClock(s.sleep), wake: onClock(s.wake) }))
+}

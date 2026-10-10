@@ -98,6 +98,10 @@ import {
   DAY_START,
   DEFAULT_DAY_START,
   setDayStart,
+  SLEEP_TITLE,
+  sleepStretches,
+  sleepRows,
+  sleepFromRows,
   fromStored,
   hoursOf,
   logicalNow,
@@ -1042,6 +1046,44 @@ function DayPage({
     await saveMoves(plan.moves)
   }
 
+  // Sleep for the night leading into the viewed day: the sheet opens with what's
+  // saved (sleepFromRows), and Save replaces those rows with the stretches entered,
+  // as 'Sleep' events (fixed; split at DAY_START so each day shows its part)
+  const [sleep, setSleep] = useState<{ day: string; ids: string[]; stretches: { sleep: number; wake: number }[] } | null>(null)
+  const openSleep = async () => {
+    const forDay = day
+    const { data, error } = await supabase
+      .from('cass_time_blocks')
+      .select('id,day,start_time,end_time')
+      .eq('source', 'event')
+      .eq('title', SLEEP_TITLE)
+      .in('day', [shiftDay(forDay, -1), forDay])
+    if (error) return setError(error.message)
+    // Only this night's rows (noon to noon), not the evening after it
+    const rows = (data ?? []).filter((r) => sleepFromRows(forDay, [r]).length > 0)
+    setSleep({ day: forDay, ids: rows.map((r) => r.id), stretches: sleepFromRows(forDay, rows) })
+  }
+  const saveSleep = async (clockTimes: { sleep: number; wake: number }[]) => {
+    if (!sleep) return
+    const r = sleepStretches(clockTimes)
+    if ('error' in r) return setError(r.error)
+    const rows = sleepRows(sleep.day, r.stretches)
+    if (sleep.ids.length) {
+      const del = await supabase.from('cass_time_blocks').delete().in('id', sleep.ids)
+      if (del.error) return setError(del.error.message)
+    }
+    if (rows.length) {
+      const ins = await supabase
+        .from('cass_time_blocks')
+        .insert(rows.map((row) => ({ ...row, title: SLEEP_TITLE, kind: 'personal', source: 'event' })))
+      if (ins.error) return setError(ins.error.message)
+    }
+    const forDay = sleep.day
+    setSleep(null)
+    loadDay(shiftDay(forDay, -1))
+    await loadDay(forDay)
+  }
+
   // A Help option tracks on today's agenda as an event starting now (fixed, light
   // blue, no done state; its card's Duration sets how long), with the todos and
   // habits not finished pushed after it (interruptPlan). Then show it.
@@ -1221,6 +1263,9 @@ function DayPage({
           <View style={styles.headerRight}>
             <Pressable onPress={() => setDay(shiftDay(day, 1))} hitSlop={10}>
               <ChevronRight size={22} color={c.ink} />
+            </Pressable>
+            <Pressable onPress={openSleep} hitSlop={10} accessibilityLabel="Sleep">
+              <Moon size={20} color={c.ink} />
             </Pressable>
             <SettingsButton onOpen={openSettings} />
           </View>
@@ -1492,6 +1537,12 @@ function DayPage({
             ) : null}
           </Pressable>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={sleep !== null} transparent animationType="none" onRequestClose={() => setSleep(null)}>
+        <Pressable style={styles.detailBackdrop} onPress={() => setSleep(null)}>
+          {sleep ? <SleepCard day={sleep.day} initial={sleep.stretches} onSave={saveSleep} /> : null}
+        </Pressable>
       </Modal>
 
       <Modal visible={settingsOpen} animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
@@ -2650,6 +2701,62 @@ function HabitsScreen({
         </Pressable>
       </Modal>
     </>
+  )
+}
+
+// The night leading into a day: sleep and wake times, with + for another stretch
+// when you were up in the night. Times are clock hours (23 = 11pm).
+function SleepCard({
+  day,
+  initial,
+  onSave,
+}: {
+  day: string
+  initial: { sleep: number; wake: number }[]
+  onSave: (stretches: { sleep: number; wake: number }[]) => void
+}) {
+  const [rows, setRows] = useState(initial.length ? initial : [{ sleep: 23, wake: 7 }])
+  const set = (i: number, key: 'sleep' | 'wake', hours: number) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [key]: hours } : r)))
+  const addRow = () =>
+    setRows((rs) => {
+      const from = (rs[rs.length - 1].wake + 0.5) % 24
+      return [...rs, { sleep: from, wake: (from + 1) % 24 }]
+    })
+  const picker = (i: number, key: 'sleep' | 'wake') => (
+    <DateTimePicker
+      value={dateAt(day, rows[i][key])}
+      mode="time"
+      display="compact"
+      minuteInterval={5}
+      onChange={(_e, picked) => picked && set(i, key, picked.getHours() + picked.getMinutes() / 60)}
+    />
+  )
+  return (
+    <View style={styles.detailCard} onStartShouldSetResponder={() => true}>
+      <Text style={styles.detailTitle}>Sleep</Text>
+      <Text style={styles.detailTimes}>The night before {dayLabel(day)}</Text>
+      {rows.map((_, i) => (
+        <View key={i} style={styles.sleepRow}>
+          <Text style={styles.sliderLabel}>Sleep</Text>
+          {picker(i, 'sleep')}
+          <Text style={styles.sliderLabel}>Wake</Text>
+          {picker(i, 'wake')}
+          {i === rows.length - 1 ? (
+            <Pressable onPress={addRow} hitSlop={8} accessibilityLabel="Add another sleep and wake">
+              <Plus size={18} color={c.accent} />
+            </Pressable>
+          ) : (
+            <Pressable onPress={() => setRows((rs) => rs.filter((_, j) => j !== i))} hitSlop={8} accessibilityLabel="Remove this stretch">
+              <X size={18} color={c.muted} />
+            </Pressable>
+          )}
+        </View>
+      ))}
+      <Pressable style={styles.submitButton} onPress={() => onSave(rows)}>
+        <Text style={styles.doneButtonText}>Save</Text>
+      </Pressable>
+    </View>
   )
 }
 
@@ -4329,6 +4436,7 @@ const styles = StyleSheet.create({
   detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
+  sleepRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
   detailDay: { fontSize: 14, color: c.muted },
   detailTimes: { fontSize: 16, color: c.ink },
   sliderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

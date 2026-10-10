@@ -14,6 +14,9 @@ import {
   fromStored,
   lastDays,
   setDayStart,
+  sleepStretches,
+  sleepRows,
+  sleepFromRows,
   DAY_END,
   DAY_START,
   shortDay,
@@ -1008,3 +1011,52 @@ test('One time divides the days: 5am by default, and Settings can move it', () =
     setDayStart(5)
   }
 })
+
+  test('a pm sleep is the evening before; later times follow on the clock', () => {
+    const r = sleepStretches([
+      { sleep: 23, wake: 2 },
+      { sleep: 2.5, wake: 7 },
+    ])
+    assert.deepEqual(r, { stretches: [{ sleep: -1, wake: 2 }, { sleep: 2.5, wake: 7 }] })
+  })
+
+  test('an am sleep is this morning', () => {
+    assert.deepEqual(sleepStretches([{ sleep: 1, wake: 8 }]), { stretches: [{ sleep: 1, wake: 8 }] })
+  })
+
+  test('a night over 18 hours is refused', () => {
+    assert.ok('error' in sleepStretches([{ sleep: 22, wake: 21 }]))
+  })
+
+  test('a stretch crossing the day start is split there, each part on its own day', () => {
+    setDayStart(5)
+    const rows = sleepRows('2026-10-09', [{ sleep: -1, wake: 7 }])
+    assert.deepEqual(rows, [
+      { day: '2026-10-08', start_time: '23:00:00', end_time: '05:00:00' },
+      { day: '2026-10-09', start_time: '05:00:00', end_time: '07:00:00' },
+    ])
+  })
+
+  test('stretches before the day start stay on the night before', () => {
+    setDayStart(5)
+    const rows = sleepRows('2026-10-09', [{ sleep: -1, wake: 2 }, { sleep: 2.5, wake: 4.5 }])
+    assert.deepEqual(rows, [
+      { day: '2026-10-08', start_time: '23:00:00', end_time: '02:00:00' },
+      { day: '2026-10-09', start_time: '02:30:00', end_time: '04:30:00' },
+    ])
+  })
+
+  test('reopening joins the split parts back into the night as entered', () => {
+    setDayStart(5)
+    const entered = [{ sleep: 23, wake: 2 }, { sleep: 2.5, wake: 7 }]
+    const r = sleepStretches(entered)
+    assert.ok('stretches' in r)
+    const rows = sleepRows('2026-10-09', r.stretches)
+    assert.deepEqual(sleepFromRows('2026-10-09', rows), entered)
+  })
+
+  test("reopening ignores the next night's sleep", () => {
+    setDayStart(5)
+    const rows = sleepRows('2026-10-10', [{ sleep: -1, wake: 7 }])
+    assert.deepEqual(sleepFromRows('2026-10-09', rows), [])
+  })
