@@ -1316,6 +1316,7 @@ function DayPage({
                   setTimer(null)
                   doneNow(d)
                 }}
+                onClose={() => setTimer(null)}
               />
             ) : null}
             {tab === 'todos' && !openTheme && !allTodos && overdue.length ? (
@@ -3713,8 +3714,9 @@ function DetailCard({
 
 // "4:05" from milliseconds
 // A habit's countdown above OVERDUE, one row: the time, then Reset, Pause/Resume,
-// and Done (marks the habit done). It stops at 0:00 and waits for Done.
-function HabitTimer({ minutes, onDone }: { minutes: number; onDone: () => void }) {
+// Done (marks the habit done), and X (closes it, the habit stays as it was).
+// It stops at 0:00 and waits for Done.
+function HabitTimer({ minutes, onDone, onClose }: { minutes: number; onDone: () => void; onClose: () => void }) {
   const total = minutes * 60_000
   // Time used before the current run, and when the current run began (null = paused)
   const [used, setUsed] = useState(0)
@@ -3751,6 +3753,9 @@ function HabitTimer({ minutes, onDone }: { minutes: number; onDone: () => void }
       </Pressable>
       <Pressable style={styles.habitTimerButton} onPress={onDone}>
         <Text style={styles.doneButtonText}>Done</Text>
+      </Pressable>
+      <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Close the timer">
+        <X size={20} color={c.muted} />
       </Pressable>
     </View>
   )
