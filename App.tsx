@@ -1945,6 +1945,26 @@ type TodoListItem = { id: string; title: string; done: boolean }
 // read off it (transcribe-todo-list). Tapping one opens its page.
 const TODO_LISTS_CACHE = 'cass:todo-lists'
 
+// Each list photo's signed link (they last an hour; reused for 50 minutes), so a
+// list opens with its photo already fetched instead of asking for a link first
+const photoLinks = new Map<string, { url: string; until: number }>()
+const PHOTO_LINK_SECONDS = 3600
+async function prefetchPhotos(paths: string[]) {
+  const now = Date.now()
+  const need = paths.filter((p) => (photoLinks.get(p)?.until ?? 0) <= now)
+  if (!need.length) return
+  const { data } = await supabase.storage.from('todo-lists').createSignedUrls(need, PHOTO_LINK_SECONDS)
+  for (const d of data ?? []) {
+    if (!d.path || !d.signedUrl) continue
+    photoLinks.set(d.path, { url: d.signedUrl, until: now + 50 * 60_000 })
+    Image.prefetch(d.signedUrl).catch(() => {})
+  }
+}
+function cachedPhotoLink(path: string | null) {
+  const hit = path ? photoLinks.get(path) : undefined
+  return hit && hit.until > Date.now() ? hit.url : null
+}
+
 function TodoListsSection({ active }: { active: boolean }) {
   // null until the first load, so it never reads "None yet" before the server answers
   const [lists, setLists] = useState<TodoList[] | null>(null)
@@ -1966,6 +1986,7 @@ function TodoListsSection({ active }: { active: boolean }) {
     }))
     setLists(next)
     AsyncStorage.setItem(TODO_LISTS_CACHE, JSON.stringify(next))
+    prefetchPhotos(next.flatMap((l) => (l.photo_path ? [l.photo_path] : [])))
   }, [])
   // The last lists seen show at once from the phone, then the server's answer
   // replaces them; refreshed again each time the Todos tab opens
@@ -2050,7 +2071,8 @@ function TodoListsSection({ active }: { active: boolean }) {
 // todos read off it. A new photo replaces the todos.
 function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }) {
   const [photoPath, setPhotoPath] = useState(list.photo_path)
-  const [photoUri, setPhotoUri] = useState<string | null>(null)
+  // Already fetched when the lists loaded (prefetchPhotos), so it shows at once
+  const [photoUri, setPhotoUri] = useState<string | null>(() => cachedPhotoLink(list.photo_path))
   const [items, setItems] = useState<TodoListItem[] | null>(null)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2076,8 +2098,12 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
     if (!photoPath || photoUri) return
     supabase.storage
       .from('todo-lists')
-      .createSignedUrl(photoPath, 3600)
-      .then(({ data }) => data && setPhotoUri(data.signedUrl))
+      .createSignedUrl(photoPath, PHOTO_LINK_SECONDS)
+      .then(({ data }) => {
+        if (!data) return
+        photoLinks.set(photoPath, { url: data.signedUrl, until: Date.now() + 50 * 60_000 })
+        setPhotoUri(data.signedUrl)
+      })
   }, [photoPath, photoUri])
 
   const capture = async (from: 'camera' | 'library') => {
@@ -2092,6 +2118,8 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
     const asset = result.canceled ? null : result.assets[0]
     if (!asset?.base64) return
     setPhotoUri(asset.uri)
+    // A new photo replaces the file at the same path, so the stored link would show the old one
+    for (const key of [...photoLinks.keys()]) if (key.endsWith(`/${list.id}.jpg`)) photoLinks.delete(key)
     await transcribe(asset.base64)
   }
 
