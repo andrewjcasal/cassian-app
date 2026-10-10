@@ -1,4 +1,4 @@
-// Shared by the transcribe-todo-list function and the app's tests (npm test).
+// Shared by the transcribe-theme-photo function and the app's tests (npm test).
 
 // Bullets, checkboxes and list numbers written in front of a todo on paper
 const MARKER = /^(?:[-*•·–—]\s+|\[[\sxX✓✔]?\]\s*|[☐☑✓✔]\s*|\d+[.)]\s+)/

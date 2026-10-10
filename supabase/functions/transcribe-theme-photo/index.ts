@@ -1,7 +1,8 @@
-// Reads a photo of a paper todo list into a Todo List's items.
-// POST { list_id, image_base64? } with the user's session. With a photo it's
-// saved to the todo-lists bucket first; without one, the list's saved photo is
-// read again. The list's items are replaced by what Claude reads off the page.
+// Reads the photo of a paper todo list on a theme and returns its todos.
+// POST { theme_id, image_base64? } with the user's session. With a photo it's
+// saved to the todo-lists bucket first (one per theme, no retakes); without one,
+// the theme's saved photo is read again (when reading it failed before). The app
+// turns the todos into real todos under the theme and sets photo_read_at.
 import Anthropic from 'npm:@anthropic-ai/sdk'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { decodeBase64, encodeBase64 } from 'jsr:@std/encoding@1/base64'
@@ -35,23 +36,25 @@ Deno.serve(async (req) => {
   const { data: auth } = await supabase.auth.getUser()
   if (!auth.user) return json({ error: 'Sign in first' }, 401)
 
-  const { list_id: listId, image_base64: imageBase64 } = await req.json().catch(() => ({}))
-  if (typeof listId !== 'string') return json({ error: 'list_id is required' }, 400)
-  const { data: list } = await supabase.from('cass_todo_lists').select('id,photo_path').eq('id', listId).maybeSingle()
-  if (!list) return json({ error: 'That list was not found' }, 404)
+  const { theme_id: themeId, image_base64: imageBase64 } = await req.json().catch(() => ({}))
+  if (typeof themeId !== 'string') return json({ error: 'theme_id is required' }, 400)
+  const { data: theme } = await supabase.from('cass_themes').select('id,photo_path,photo_read_at').eq('id', themeId).maybeSingle()
+  if (!theme) return json({ error: 'That theme was not found' }, 404)
+  if (theme.photo_read_at) return json({ error: 'This photo has already been read' }, 409)
 
   let photo: string
   if (typeof imageBase64 === 'string' && imageBase64) {
+    // One photo per theme: no retakes
+    if (theme.photo_path) return json({ error: 'This theme already has its photo' }, 409)
     photo = imageBase64
-    const path = `${auth.user.id}/${listId}.jpg`
-    const upload = await supabase.storage
-      .from('todo-lists')
-      .upload(path, decodeBase64(photo), { contentType: 'image/jpeg', upsert: true })
+    const path = `${auth.user.id}/theme-${themeId}.jpg`
+    const upload = await supabase.storage.from('todo-lists').upload(path, decodeBase64(photo), { contentType: 'image/jpeg' })
     if (upload.error) return json({ error: upload.error.message }, 500)
-    const saved = await supabase.from('cass_todo_lists').update({ photo_path: path }).eq('id', listId)
+    const saved = await supabase.from('cass_themes').update({ photo_path: path }).eq('id', themeId)
     if (saved.error) return json({ error: saved.error.message }, 500)
-  } else if (list.photo_path) {
-    const download = await supabase.storage.from('todo-lists').download(list.photo_path)
+  } else if (theme.photo_path) {
+    // The photo was saved but reading it failed last time
+    const download = await supabase.storage.from('todo-lists').download(theme.photo_path)
     if (download.error) return json({ error: download.error.message }, 500)
     photo = encodeBase64(new Uint8Array(await download.data.arrayBuffer()))
   } else {
@@ -88,15 +91,6 @@ Deno.serve(async (req) => {
     return json({ error: 'Reading the photo failed; try again' }, 502)
   }
 
-  // A retake replaces the list's todos
-  const cleared = await supabase.from('cass_todo_list_items').delete().eq('list_id', listId)
-  if (cleared.error) return json({ error: cleared.error.message }, 500)
-  if (todos.length) {
-    const inserted = await supabase
-      .from('cass_todo_list_items')
-      .insert(todos.map((title, sort_order) => ({ list_id: listId, title, sort_order })))
-    if (inserted.error) return json({ error: inserted.error.message }, 500)
-  }
-  await supabase.from('cass_todo_lists').update({ transcribed_at: new Date().toISOString() }).eq('id', listId)
-  return json({ count: todos.length })
+  // The app places them as todos (placeSteps in src/schedule.ts), then sets photo_read_at
+  return json({ todos })
 })

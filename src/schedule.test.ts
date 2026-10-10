@@ -14,6 +14,7 @@ import {
   fromStored,
   lastDays,
   setDayStart,
+  placeSteps,
   dragSpan,
   sleepStretches,
   sleepRows,
@@ -1088,4 +1089,21 @@ test('a night with every stretch removed saves nothing', () => {
   const r = sleepStretches([])
   assert.deepEqual(r, { stretches: [] })
   assert.deepEqual(sleepRows('2026-10-10', []), [])
+})
+
+test('photo todos go back to back in the first gaps, around what is there', () => {
+  setDayStart(5)
+  const items = [{ id: 'a', title: 'Lunch', start: 8.5, end: 9.5, kind: 'block' as const, done: false }]
+  assert.deepEqual(placeSteps(items, 3, 0.5, false, 0), [8, 9.5, 10])
+})
+
+test('photo todos today start at the next quarter hour', () => {
+  setDayStart(5)
+  assert.deepEqual(placeSteps([], 2, 0.5, true, 13.1), [13.25, 13.75])
+})
+
+test('a full day places fewer photo todos than asked', () => {
+  setDayStart(5)
+  // Room from 28 to 29 (5am) is two half hours
+  assert.deepEqual(placeSteps([], 5, 0.5, true, 28), [28, 28.5])
 })

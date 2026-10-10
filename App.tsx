@@ -108,6 +108,8 @@ import {
   DAY_START,
   DEFAULT_DAY_START,
   setDayStart,
+  placeSteps,
+  PHOTO_TODO_MINUTES,
   dragSpan,
   SLEEP_TITLE,
   sleepStretches,
@@ -506,7 +508,7 @@ function DayPage({
   }
   // Themes (Todos tab): the outcome a set of todos is for. A theme isn't scheduled;
   // its todos are (theme_id). themeRows orders them, no next step first.
-  const [themes, setThemes] = useState<{ id: string; title: string; sort_order: number }[]>([])
+  const [themes, setThemes] = useState<{ id: string; title: string; sort_order: number; photo_path: string | null; photo_read_at: string | null }[]>([])
   const [themeSteps, setThemeSteps] = useState<ThemeStep[]>([])
   // The theme page open in the Todos tab, if any
   const [openThemeId, setOpenThemeId] = useState<string | null>(null)
@@ -516,7 +518,7 @@ function DayPage({
   const [themeMenu, setThemeMenu] = useState(false)
   const loadThemes = useCallback(async () => {
     const [themeRes, stepRes] = await Promise.all([
-      supabase.from('cass_themes').select('id,title,sort_order').is('archived_at', null).order('sort_order'),
+      supabase.from('cass_themes').select('id,title,sort_order,photo_path,photo_read_at').is('archived_at', null).order('sort_order'),
       supabase
         .from('cass_time_blocks')
         .select('id,title,day,start_time,end_time,done,theme_id')
@@ -527,6 +529,7 @@ function DayPage({
     const err = themeRes.error ?? stepRes.error
     if (err) return setError(err.message)
     setThemes(themeRes.data ?? [])
+    saveThemePhotos(themeRes.data ?? [])
     setThemeSteps(
       (stepRes.data ?? []).map((b) => ({
         id: b.id,
@@ -594,7 +597,7 @@ function DayPage({
     const { data, error } = await supabase
       .from('cass_themes')
       .insert({ title: d.title, sort_order: themes.length + 1 })
-      .select('id,title,sort_order')
+      .select('id,title,sort_order,photo_path,photo_read_at')
       .single()
     if (error) return setError(error.message)
     setThemes((list) => [...list, data])
@@ -616,6 +619,29 @@ function DayPage({
       .insert({ ...toStored(today, start, start + 1), title, kind: 'personal', source: 'app', theme_id: themeId })
     if (error) return setError(error.message)
     await loadDay(today)
+  }
+  // The todos read off a theme's photo, each a real todo under the theme: placed
+  // back to back in today's first gaps, and whatever doesn't fit goes to the next
+  // days (placeSteps). Then the photo is marked read, so it isn't read twice.
+  const addPhotoTodos = async (themeId: string, titles: string[]) => {
+    const length = PHOTO_TODO_MINUTES / 60
+    let left = titles
+    for (let k = 0; left.length && k < 14; k++) {
+      const d = shiftDay(today, k)
+      const dayItems = k === 0 ? (byDay[today]?.items ?? (await fetchDayItems(today))) : await fetchDayItems(d)
+      const starts = placeSteps(dayItems, left.length, length, k === 0, nowHours())
+      if (starts.length) {
+        const { error } = await supabase.from('cass_time_blocks').insert(
+          starts.map((start, n) => ({ ...toStored(d, start, start + length), title: left[n], kind: 'personal', source: 'app', theme_id: themeId })),
+        )
+        if (error) return setError(error.message)
+      }
+      left = left.slice(starts.length)
+    }
+    if (left.length) setError(`No room in the next two weeks for ${left.length} of them`)
+    const { error } = await supabase.from('cass_themes').update({ photo_read_at: new Date().toISOString() }).eq('id', themeId)
+    if (error) setError(error.message)
+    await Promise.all([loadDay(today), loadThemes()])
   }
   // Opening a step on another day shows that day behind the card, so its card's moves work
   const openThemeStep = async (step: ThemeStep) => {
@@ -1352,6 +1378,7 @@ function DayPage({
           >
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
+            {tab === 'todos' && openTheme ? <ThemePhoto key={`photo-${openTheme.id}`} theme={openTheme} onTodos={(titles) => addPhotoTodos(openTheme.id, titles)} /> : null}
             {tab === 'todos' && openTheme ? (
               <ThemeSteps
                 key={openTheme.id}
@@ -1512,10 +1539,6 @@ function DayPage({
                 </View>
               </>
             ) : null}
-            {/* Todo Lists sit under Themes; mounted from Agenda too (hidden) so they're loaded before you switch */}
-            <View style={tab === 'todos' && !openTheme && !allTodos ? null : styles.hidden}>
-              <TodoListsSection active={tab === 'todos'} />
-            </View>
           </ScrollView>
         </Animated.View>
       </View>
@@ -1948,190 +1971,80 @@ function ThemeSteps({
   )
 }
 
-type TodoList = { id: string; title: string; photo_path: string | null; transcribed_at: string | null; count: number }
-type TodoListItem = { id: string; title: string; done: boolean }
-
-// Planning's Todo Lists: paper lists captured as a photo, each with the todos
-// read off it (transcribe-todo-list). Tapping one opens its page.
-const TODO_LISTS_CACHE = 'cass:todo-lists'
-
-// A list's photo, saved on the phone the first time it's seen. The photos are
-// full size (12 MP) with no cache headers, so iOS kept none of it and every open
-// downloaded and decoded it again. The name carries when the list was last read,
-// so a new photo gets a new file.
+// A theme's photo of a paper list, saved on the phone the first time it's seen.
+// The photos are full size (12 MP) with no cache headers, so iOS kept none of it
+// and every open downloaded and decoded it again. One photo per theme, never
+// replaced, so the theme's id names the file.
+type ThemePhotoInfo = { id: string; photo_path: string | null; photo_read_at: string | null }
 const PHOTO_LINK_SECONDS = 3600
-function listPhotoFile(list: { id: string; transcribed_at: string | null }) {
+function themePhotoFile(themeId: string) {
   if (!fileSystem) return null
-  const stamp = (list.transcribed_at ?? 'none').replace(/[^0-9a-zA-Z]/g, '')
-  return new fileSystem.File(fileSystem.Paths.cache, `todo-list-${list.id}-${stamp}.jpg`)
+  return new fileSystem.File(fileSystem.Paths.cache, `theme-photo-${themeId}.jpg`)
 }
 // The saved copy's address, or null if it isn't on the phone yet
-function savedListPhoto(list: { id: string; transcribed_at: string | null }) {
+function savedThemePhoto(themeId: string) {
   try {
-    const file = listPhotoFile(list)
+    const file = themePhotoFile(themeId)
     return file?.exists ? file.uri : null
   } catch {
     return null
   }
 }
-// Saves the photos not on the phone yet; called when the lists load
-async function saveListPhotos(lists: TodoList[]) {
+// Saves the photos not on the phone yet; called when the themes load
+async function saveThemePhotos(themes: ThemePhotoInfo[]) {
   if (!fileSystem) return
-  const need = lists.filter((l) => l.photo_path && !savedListPhoto(l))
+  const need = themes.filter((t) => t.photo_path && !savedThemePhoto(t.id))
   if (!need.length) return
   const { data } = await supabase.storage
     .from('todo-lists')
-    .createSignedUrls(need.map((l) => l.photo_path!), PHOTO_LINK_SECONDS)
+    .createSignedUrls(need.map((t) => t.photo_path!), PHOTO_LINK_SECONDS)
   await Promise.all(
-    need.map(async (l) => {
-      const url = data?.find((d) => d.path === l.photo_path)?.signedUrl
-      const file = listPhotoFile(l)
+    need.map(async (t) => {
+      const url = data?.find((d) => d.path === t.photo_path)?.signedUrl
+      const file = themePhotoFile(t.id)
       if (!url || !file) return
       try {
         await fileSystem!.File.downloadFileAsync(url, file, { idempotent: true })
       } catch {
-        // Tried again the next time the lists load
+        // Tried again the next time the themes load
       }
     }),
   )
 }
 
-function TodoListsSection({ active }: { active: boolean }) {
-  // null until the first load, so it never reads "None yet" before the server answers
-  const [lists, setLists] = useState<TodoList[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-  const [open, setOpen] = useState<TodoList | null>(null)
-
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('cass_todo_lists')
-      .select('id,title,photo_path,transcribed_at,cass_todo_list_items(count)')
-      .order('created_at', { ascending: false })
-    if (error) return setError(error.message)
-    setError(null)
-    const next = (data ?? []).map(({ cass_todo_list_items: items, ...l }) => ({
-      ...l,
-      count: (items as { count: number }[] | null)?.[0]?.count ?? 0,
-    }))
-    setLists(next)
-    AsyncStorage.setItem(TODO_LISTS_CACHE, JSON.stringify(next))
-    saveListPhotos(next)
-  }, [])
-  // The last lists seen show at once from the phone, then the server's answer
-  // replaces them; refreshed again each time the Todos tab opens
-  useEffect(() => {
-    AsyncStorage.getItem(TODO_LISTS_CACHE).then((cached) => {
-      if (cached) setLists((current) => current ?? JSON.parse(cached))
-    })
-    load()
-  }, [load])
-  useEffect(() => {
-    if (active) load()
-  }, [active, load])
-
-  const create = async () => {
-    const title = name.trim()
-    if (!title) return
-    const { data, error } = await supabase.from('cass_todo_lists').insert({ title }).select('id,title,photo_path,transcribed_at').single()
-    if (error) return setError(error.message)
-    setAdding(false)
-    setName('')
-    setOpen({ ...data, count: 0 })
-    load()
-  }
-
-  return (
-    <>
-      <View style={styles.sectionHeaderRow}>
-        <Text style={[styles.sectionLabel, { flex: 1 }]}>TODO LISTS</Text>
-        <Pressable style={styles.addButton} onPress={() => setAdding(!adding)} hitSlop={8} accessibilityLabel="Add a todo list">
-          <Plus size={16} color={c.accent} />
-          <Text style={styles.addButtonText}>Add</Text>
-        </Pressable>
-      </View>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <View style={styles.card}>
-        {adding ? (
-          <View style={[styles.addRow, !!lists?.length && styles.listDivider]}>
-            <TextInput
-              style={styles.addInput}
-              value={name}
-              onChangeText={setName}
-              placeholder="List name"
-              placeholderTextColor={c.muted}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={create}
-            />
-            <Pressable onPress={create} hitSlop={8} accessibilityLabel="Create list">
-              <Check size={20} color={c.accent} />
-            </Pressable>
-          </View>
-        ) : null}
-        {lists === null ? <ActivityIndicator style={styles.emptySection} size="small" color={c.accent} /> : null}
-        {(lists ?? []).map((l) => (
-          <Pressable key={l.id} style={styles.todoRow} onPress={() => setOpen(l)}>
-            <Text style={[styles.todoText, { flex: 1 }]}>{l.title}</Text>
-            <Text style={styles.minutesLabel}>
-              {l.photo_path ? `${l.count} ${l.count === 1 ? 'todo' : 'todos'}` : 'No photo yet'}
-            </Text>
-            <ChevronRight size={18} color={c.muted} />
-          </Pressable>
-        ))}
-        {lists?.length === 0 && !adding ? <Text style={[styles.minutesLabel, styles.emptySection]}>None yet</Text> : null}
-      </View>
-
-      <Modal visible={open !== null} animationType="slide" onRequestClose={() => setOpen(null)}>
-        {open ? (
-          <TodoListPage
-            list={open}
-            onClose={() => {
-              setOpen(null)
-              load()
-            }}
-          />
-        ) : null}
-      </Modal>
-    </>
-  )
-}
-
-// One Todo List: the photo of the paper list (or buttons to take one), then the
-// todos read off it. A new photo replaces the todos.
-function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }) {
-  const [photoPath, setPhotoPath] = useState(list.photo_path)
-  // The copy saved on the phone when the lists loaded (saveListPhotos), so it shows at once
-  const [photoUri, setPhotoUri] = useState<string | null>(() => (list.photo_path ? savedListPhoto(list) : null))
-  const [items, setItems] = useState<TodoListItem[] | null>(null)
+// The photo on a theme's page. With none yet: Take photo / Choose photo, and the
+// todos read off it become real todos under the theme (onTodos). One photo per
+// theme, no retakes. If reading failed, Read photo tries the saved one again.
+function ThemePhoto({ theme, onTodos }: { theme: ThemePhotoInfo; onTodos: (titles: string[]) => Promise<void> }) {
+  const [photoUri, setPhotoUri] = useState<string | null>(() => (theme.photo_path ? savedThemePhoto(theme.id) : null))
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Tapping the photo shows it full screen, pinch to zoom
   const [fullPhoto, setFullPhoto] = useState(false)
-  // The close button sits below the status bar and Dynamic Island
   const insets = useSafeAreaInsets()
-
-  const loadItems = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('cass_todo_list_items')
-      .select('id,title,done')
-      .eq('list_id', list.id)
-      .order('sort_order')
-    if (error) return setError(error.message)
-    setItems(data ?? [])
-  }, [list.id])
+  // A saved photo is private, so without a copy on the phone it's shown through a link that lasts an hour
   useEffect(() => {
-    loadItems()
-  }, [loadItems])
-  // A saved photo is private, so it's shown through a link that lasts an hour
-  useEffect(() => {
-    if (!photoPath || photoUri) return
+    if (!theme.photo_path || photoUri) return
     supabase.storage
       .from('todo-lists')
-      .createSignedUrl(photoPath, PHOTO_LINK_SECONDS)
+      .createSignedUrl(theme.photo_path, PHOTO_LINK_SECONDS)
       .then(({ data }) => data && setPhotoUri(data.signedUrl))
-  }, [photoPath, photoUri])
+  }, [theme.photo_path, photoUri])
+
+  const read = async (imageBase64?: string) => {
+    setError(null)
+    setReading(true)
+    const { data, error } = await supabase.functions.invoke('transcribe-theme-photo', {
+      body: { theme_id: theme.id, image_base64: imageBase64 },
+    })
+    if (error) {
+      setReading(false)
+      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
+      return setError(detail?.error ?? error.message)
+    }
+    await onTodos((data as { todos?: string[] })?.todos ?? [])
+    setReading(false)
+  }
 
   const capture = async (from: 'camera' | 'library') => {
     setError(null)
@@ -2145,109 +2058,42 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
     const asset = result.canceled ? null : result.assets[0]
     if (!asset?.base64) return
     setPhotoUri(asset.uri)
-    await transcribe(asset.base64)
+    await read(asset.base64)
   }
 
-  // Sends a new photo, or reads the saved one again when there's none
-  const transcribe = async (imageBase64?: string) => {
-    setReading(true)
-    const { error } = await supabase.functions.invoke('transcribe-todo-list', {
-      body: { list_id: list.id, image_base64: imageBase64 },
-    })
-    setReading(false)
-    if (error) {
-      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
-      const status = (error as { context?: Response }).context?.status
-      // 502 is the read step: the photo is already saved, and there's no working
-      // Anthropic key yet, so the todos get added from a Claude session for now
-      if (status === 502 && imageBase64) {
-        setPhotoPath((p) => p ?? 'uploaded')
-        return setError('Photo saved. Reading it automatically is not set up yet, so ask Claude to add the todos from it.')
-      }
-      return setError(detail?.error ?? error.message)
-    }
-    // The function saved the photo; the picked one is already showing, so only the flag matters here
-    if (imageBase64) setPhotoPath((p) => p ?? 'uploaded')
-    loadItems()
-  }
-
-  const toggle = async (item: TodoListItem) => {
-    setItems((list) => list?.map((it) => (it.id === item.id ? { ...it, done: !it.done } : it)) ?? null)
-    const { error } = await supabase.from('cass_todo_list_items').update({ done: !item.done }).eq('id', item.id)
-    if (error) setError(error.message)
-  }
-
+  const hasPhoto = !!(theme.photo_path || photoUri)
   return (
-    <ModalScreen style={styles.screen}>
-      <View style={[styles.header, styles.fixedHeader]}>
-        <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Back" style={[styles.backButton, { width: 64 }]}>
-          <ChevronLeft size={18} color={c.accent} />
-          <Text style={styles.backText}>Back</Text>
+    <>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {photoUri ? (
+        <Pressable onPress={() => setFullPhoto(true)} accessibilityLabel="Show the photo full screen">
+          <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" />
         </Pressable>
-        <Text style={[styles.title, { flex: 1 }]} numberOfLines={1}>
-          {list.title}
-        </Text>
-        <View style={{ width: 64 }} />
-      </View>
-      <ScrollView contentContainerStyle={styles.page}>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {photoUri ? (
-          <Pressable onPress={() => setFullPhoto(true)} accessibilityRole="imagebutton" accessibilityLabel="Show the photo full screen">
-            <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" />
-          </Pressable>
-        ) : null}
+      ) : null}
+      {reading ? (
+        <View style={styles.readingRow}>
+          <ActivityIndicator size="small" color={c.accent} />
+          <Text style={styles.todoText}>Reading your list...</Text>
+        </View>
+      ) : !hasPhoto ? (
         <View style={styles.captureRow}>
-          <Pressable style={[styles.captureButton, reading && styles.buttonDisabled]} disabled={reading} onPress={() => capture('camera')}>
+          <Pressable style={styles.captureButton} onPress={() => capture('camera')}>
             <Camera size={18} color="#ffffff" />
-            <Text style={styles.doneButtonText}>{photoPath ? 'Retake' : 'Take photo'}</Text>
+            <Text style={styles.doneButtonText}>Take photo</Text>
           </Pressable>
-          <Pressable style={[styles.captureButtonQuiet, reading && styles.buttonQuietDisabled]} disabled={reading} onPress={() => capture('library')}>
+          <Pressable style={styles.captureButtonQuiet} onPress={() => capture('library')}>
             <ImagePlus size={18} color={c.accent} />
             <Text style={styles.captureQuietText}>Choose photo</Text>
           </Pressable>
         </View>
+      ) : !theme.photo_read_at && theme.photo_path ? (
+        <Pressable style={styles.submitButton} onPress={() => read()}>
+          <Text style={styles.doneButtonText}>Read photo</Text>
+        </Pressable>
+      ) : null}
 
-        <Text style={styles.sectionLabel}>TODOS</Text>
-        <View style={styles.card}>
-          {reading ? (
-            <View style={styles.readingRow}>
-              <ActivityIndicator size="small" color={c.accent} />
-              <Text style={styles.todoText}>Reading your list...</Text>
-            </View>
-          ) : items === null ? (
-            <ActivityIndicator style={styles.emptySection} size="small" color={c.accent} />
-          ) : items.length ? (
-            items.map((it) => (
-              <Pressable
-                key={it.id}
-                style={styles.todoRow}
-                onPress={() => toggle(it)}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: it.done }}
-              >
-                {it.done ? <CircleCheck size={20} color={c.accent} /> : <Circle size={20} color={c.muted} />}
-                <Text style={[styles.todoText, { flex: 1 }, it.done && styles.todoDoneText]}>{it.title}</Text>
-              </Pressable>
-            ))
-          ) : (
-            <Text style={[styles.minutesLabel, styles.emptySection]}>
-              {photoPath ? 'No todos were read from the photo. Try a clearer photo.' : 'Take a photo of the list to fill this in.'}
-            </Text>
-          )}
-        </View>
-      </ScrollView>
-
-      {/* A layer over the page, not a second Modal: iOS doesn't reliably close a
-          Modal opened from inside another. Tapping the photo or the X closes it.
-          It stays mounted, invisible, once there's a photo, so the full size image is
-          already loaded and decoded when you tap; mounting it on tap made it lag. */}
-      {photoUri ? (
-        <View
-          style={[StyleSheet.absoluteFill, styles.photoViewer, fullPhoto ? null : styles.photoViewerHidden]}
-          pointerEvents={fullPhoto ? 'auto' : 'none'}
-          accessibilityElementsHidden={!fullPhoto}
-          importantForAccessibility={fullPhoto ? 'auto' : 'no-hide-descendants'}
-        >
+      <Modal visible={fullPhoto} animationType="fade" onRequestClose={() => setFullPhoto(false)}>
+        <View style={[styles.screenFill, styles.photoViewer]}>
           <ScrollView
             style={styles.screenFill}
             contentContainerStyle={styles.photoViewerContent}
@@ -2265,7 +2111,7 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
             }}
           >
             <Pressable style={styles.screenFill} onPress={() => setFullPhoto(false)} accessibilityLabel="Close photo">
-              <Image source={{ uri: photoUri }} style={styles.photoViewerImage} resizeMode="contain" />
+              {photoUri ? <Image source={{ uri: photoUri }} style={styles.photoViewerImage} resizeMode="contain" /> : null}
             </Pressable>
           </ScrollView>
           <Pressable
@@ -2278,8 +2124,8 @@ function TodoListPage({ list, onClose }: { list: TodoList; onClose: () => void }
             <X size={22} color="#ffffff" />
           </Pressable>
         </View>
-      ) : null}
-    </ModalScreen>
+      </Modal>
+    </>
   )
 }
 

@@ -889,3 +889,21 @@ export function sleepFromRows(day: string, rows: { day: string; start_time: stri
   const onClock = (h: number) => ((h % 24) + 24) % 24
   return merged.map((s) => ({ sleep: onClock(s.sleep), wake: onClock(s.wake) }))
 }
+
+// Todos read off a theme's photo: each is this long, placed one after another in
+// the first gaps (newBlockStart), today first and then the days after
+export const PHOTO_TODO_MINUTES = 30
+
+// Starts for up to `count` new blocks of `length` hours on one day, each in the
+// first gap left after the ones before it. Fewer come back when the day fills up.
+export function placeSteps(items: CalItem[], count: number, length: number, isToday: boolean, now: number) {
+  const taken = [...items]
+  const starts: number[] = []
+  for (let i = 0; i < count; i++) {
+    const start = newBlockStart(taken, length, isToday, now)
+    if (start === null) break
+    starts.push(start)
+    taken.push({ id: `new-${i}`, title: '', start, end: start + length, kind: 'block', done: false })
+  }
+  return starts
+}
