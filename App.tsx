@@ -1000,7 +1000,7 @@ function DayPage({
     await Promise.all([loadDay(d.day), loadDay(today)])
   }
 
-  // The card's ⋯ Delete: removes the todo; the todos after it stay where they are
+  // The card's ⋯ Delete: removes the todo or event; the blocks after it stay where they are
   const deleteTodo = async (d: Detail) => {
     setDetail(null)
     // Agenda items can be legacy cass_tasks rows
@@ -1574,7 +1574,7 @@ function DayPage({
                 .map((it) => ({ id: it.id, title: it.title, start: it.start, end: it.end }))}
               help={help}
               onMoveToDay={moveToDay}
-              onDelete={!detail.habitId && !detail.event ? deleteTodo : undefined}
+              onDelete={!detail.habitId ? deleteTodo : undefined}
               themes={themes}
               // Themes are for todos, not habits or events
               onTheme={!detail.habitId && !detail.event ? setTodoTheme : undefined}
