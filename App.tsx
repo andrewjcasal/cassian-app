@@ -33,6 +33,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Crop,
   ListFilter,
   Clock,
   GripVertical,
@@ -59,6 +60,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker'
 import Slider from '@react-native-community/slider'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { type Crop as CropBox, type Size, type View as CropView, clampView, cropOf, shownSize, thumbLayout, viewOf } from './src/crop'
 import Svg, { Circle as SvgCircle, Line as SvgLine, Path, Rect, Text as SvgText } from 'react-native-svg'
 import { supabase } from './src/supabase'
 import type { CassianDayProps } from './widgets/CassianDay'
@@ -510,7 +512,7 @@ function DayPage({
   }
   // Themes (Todos tab): the outcome a set of todos is for. A theme isn't scheduled;
   // its todos are (theme_id). themeRows orders them, no next step first.
-  const [themes, setThemes] = useState<{ id: string; title: string; sort_order: number; photo_path: string | null; photo_read_at: string | null }[]>([])
+  const [themes, setThemes] = useState<{ id: string; title: string; sort_order: number; photo_path: string | null; photo_read_at: string | null; photo_crop: CropBox | null }[]>([])
   const [themeSteps, setThemeSteps] = useState<ThemeStep[]>([])
   // The theme page open in the Todos tab, if any
   const [openThemeId, setOpenThemeId] = useState<string | null>(null)
@@ -518,9 +520,17 @@ function DayPage({
   const [themeName, setThemeName] = useState('')
   const [renamingTheme, setRenamingTheme] = useState(false)
   const [themeMenu, setThemeMenu] = useState(false)
+  // The theme's ⋯ Reposition thumbnail: its photo full screen behind a frame
+  const [repositioning, setRepositioning] = useState(false)
+  const saveThemeCrop = async (id: string, crop: CropBox | null) => {
+    setRepositioning(false)
+    setThemes((list) => list.map((t) => (t.id === id ? { ...t, photo_crop: crop } : t)))
+    const { error } = await supabase.from('cass_themes').update({ photo_crop: crop }).eq('id', id)
+    if (error) setError(error.message)
+  }
   const loadThemes = useCallback(async () => {
     const [themeRes, stepRes] = await Promise.all([
-      supabase.from('cass_themes').select('id,title,sort_order,photo_path,photo_read_at').is('archived_at', null).order('sort_order'),
+      supabase.from('cass_themes').select('id,title,sort_order,photo_path,photo_read_at,photo_crop').is('archived_at', null).order('sort_order'),
       supabase
         .from('cass_time_blocks')
         .select('id,title,day,start_time,end_time,done,theme_id,theme_position')
@@ -600,7 +610,7 @@ function DayPage({
     const { data, error } = await supabase
       .from('cass_themes')
       .insert({ title: d.title, sort_order: themes.length + 1 })
-      .select('id,title,sort_order,photo_path,photo_read_at')
+      .select('id,title,sort_order,photo_path,photo_read_at,photo_crop')
       .single()
     if (error) return setError(error.message)
     setThemes((list) => [...list, data])
@@ -1303,6 +1313,18 @@ function DayPage({
             </View>
             {themeMenu ? (
               <View style={[styles.menu, styles.themeMenu]}>
+                {openTheme.photo_path ? (
+                  <Pressable
+                    style={[styles.menuItem, styles.menuRow]}
+                    onPress={() => {
+                      setThemeMenu(false)
+                      setRepositioning(true)
+                    }}
+                  >
+                    <Crop size={16} color={c.ink} />
+                    <Text style={styles.menuText}>Reposition thumbnail</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable style={[styles.menuItem, styles.menuRow]} onPress={() => archiveTheme(openTheme.id)}>
                   <Archive size={16} color={c.ink} />
                   <Text style={styles.menuText}>Archive</Text>
@@ -1389,7 +1411,14 @@ function DayPage({
           >
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
-            {tab === 'todos' && openTheme ? <ThemePhoto key={`photo-${openTheme.id}`} theme={openTheme} onTodos={(titles) => addPhotoTodos(openTheme.id, titles)} /> : null}
+            {tab === 'todos' && openTheme ? <ThemePhoto
+                key={`photo-${openTheme.id}`}
+                theme={openTheme}
+                onTodos={(titles) => addPhotoTodos(openTheme.id, titles)}
+                repositioning={repositioning}
+                onReposition={(crop) => saveThemeCrop(openTheme.id, crop)}
+                onCancelReposition={() => setRepositioning(false)}
+              /> : null}
             {tab === 'todos' && openTheme ? (
               <ThemeSteps
                 key={openTheme.id}
@@ -2018,7 +2047,7 @@ function ThemeSteps({
 // The photos are full size (12 MP) with no cache headers, so iOS kept none of it
 // and every open downloaded and decoded it again. One photo per theme, never
 // replaced, so the theme's id names the file.
-type ThemePhotoInfo = { id: string; photo_path: string | null; photo_read_at: string | null }
+type ThemePhotoInfo = { id: string; photo_path: string | null; photo_read_at: string | null; photo_crop?: CropBox | null }
 const PHOTO_LINK_SECONDS = 3600
 function themePhotoFile(themeId: string) {
   if (!fileSystem) return null
@@ -2055,10 +2084,137 @@ async function saveThemePhotos(themes: ThemePhotoInfo[]) {
   )
 }
 
+// Reposition thumbnail: the photo full screen behind a frame the thumbnail's size.
+// Drag to move it, pinch to zoom; the frame shows what the thumbnail will.
+// Whole photo goes back to showing all of it.
+function CropEditor({
+  uri,
+  crop,
+  onSave,
+  onCancel,
+}: {
+  uri: string
+  crop: CropBox | null
+  onSave: (crop: CropBox | null) => void
+  onCancel: () => void
+}) {
+  const insets = useSafeAreaInsets()
+  const { width, height } = useWindowDimensions()
+  // The thumbnail is the page width less its 12 padding each side, 260 tall
+  const frame = { w: width - 24, h: 260 }
+  const frameLeft = 12
+  const frameTop = (height - frame.h) / 2
+  const [photo, setPhoto] = useState<Size | null>(null)
+  const [view, setView] = useState<CropView>({ zoom: 1, tx: 0, ty: 0 })
+  useEffect(() => {
+    Image.getSize(uri, (w, h) => {
+      const size = { w, h }
+      setPhoto(size)
+      setView(crop ? viewOf(crop, size, frame) : { zoom: 1, tx: 0, ty: 0 })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uri])
+
+  // One finger moves the photo, two pinch it; the start resets when fingers change
+  const latest = useRef({ view, photo, frame })
+  latest.current = { view, photo, frame }
+  const start = useRef<{ count: number; view: CropView; x: number; y: number; dist: number } | null>(null)
+  const touchesOf = (e: { nativeEvent: { touches: { pageX: number; pageY: number }[] } }) => {
+    const t = e.nativeEvent.touches
+    const x = t.reduce((a, p) => a + p.pageX, 0) / t.length
+    const y = t.reduce((a, p) => a + p.pageY, 0) / t.length
+    const dist = t.length > 1 ? Math.hypot(t[0].pageX - t[1].pageX, t[0].pageY - t[1].pageY) : 0
+    return { count: t.length, x, y, dist }
+  }
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
+        start.current = { ...touchesOf(e), view: latest.current.view }
+      },
+      onPanResponderMove: (e) => {
+        const { photo: p, frame: f } = latest.current
+        const now = touchesOf(e)
+        if (!p || !now.count) return
+        if (!start.current || start.current.count !== now.count) {
+          start.current = { ...now, view: latest.current.view }
+          return
+        }
+        const s0 = start.current
+        const zoom = now.count > 1 && s0.dist > 0 ? s0.view.zoom * (now.dist / s0.dist) : s0.view.zoom
+        setView(clampView({ zoom, tx: s0.view.tx + now.x - s0.x, ty: s0.view.ty + now.y - s0.y }, p, f))
+      },
+      onPanResponderRelease: () => {
+        start.current = null
+      },
+      onPanResponderTerminate: () => {
+        start.current = null
+      },
+    }),
+  ).current
+
+  const shown = photo ? shownSize(photo, frame, view.zoom) : null
+  return (
+    <View style={[styles.screenFill, styles.photoViewer]} {...responder.panHandlers}>
+      {shown ? (
+        <Image
+          source={{ uri }}
+          style={{
+            position: 'absolute',
+            width: shown.w,
+            height: shown.h,
+            left: frameLeft + frame.w / 2 + view.tx - shown.w / 2,
+            top: frameTop + frame.h / 2 + view.ty - shown.h / 2,
+          }}
+        />
+      ) : (
+        <ActivityIndicator style={{ marginTop: height / 2 }} color="#ffffff" />
+      )}
+      {/* Dims everything outside the frame */}
+      <View pointerEvents="none" style={[styles.cropShade, { top: 0, left: 0, right: 0, height: frameTop }]} />
+      <View pointerEvents="none" style={[styles.cropShade, { top: frameTop + frame.h, left: 0, right: 0, bottom: 0 }]} />
+      <View pointerEvents="none" style={[styles.cropShade, { top: frameTop, left: 0, width: frameLeft, height: frame.h }]} />
+      <View pointerEvents="none" style={[styles.cropShade, { top: frameTop, right: 0, width: frameLeft, height: frame.h }]} />
+      <View pointerEvents="none" style={[styles.cropFrame, { top: frameTop, left: frameLeft, width: frame.w, height: frame.h }]} />
+      <Text pointerEvents="none" style={[styles.cropHint, { top: frameTop - 32 }]}>
+        Drag and pinch to fit the thumbnail
+      </Text>
+      <View style={[styles.cropButtons, { bottom: insets.bottom + 16 }]}>
+        <Pressable style={styles.cropButton} onPress={onCancel}>
+          <Text style={styles.cropButtonText}>Cancel</Text>
+        </Pressable>
+        <Pressable style={styles.cropButton} onPress={() => onSave(null)}>
+          <Text style={styles.cropButtonText}>Whole photo</Text>
+        </Pressable>
+        <Pressable style={[styles.cropButton, styles.cropSave]} disabled={!photo} onPress={() => photo && onSave(cropOf(view, photo, frame))}>
+          <Text style={styles.cropButtonText}>Save</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
 // The photo on a theme's page. With none yet: Take photo / Choose photo, and the
 // todos read off it become real todos under the theme (onTodos). One photo per
 // theme, no retakes. If reading failed, Read photo tries the saved one again.
-function ThemePhoto({ theme, onTodos }: { theme: ThemePhotoInfo; onTodos: (titles: string[]) => Promise<void> }) {
+function ThemePhoto({
+  theme,
+  onTodos,
+  repositioning,
+  onReposition,
+  onCancelReposition,
+}: {
+  theme: ThemePhotoInfo
+  onTodos: (titles: string[]) => Promise<void>
+  // The ⋯ menu's Reposition thumbnail: open, and what Save or Cancel does
+  repositioning: boolean
+  onReposition: (crop: CropBox | null) => void
+  onCancelReposition: () => void
+}) {
+  // The thumbnail's size, for drawing the saved crop into it
+  const [box, setBox] = useState<Size | null>(null)
   const [photoUri, setPhotoUri] = useState<string | null>(() => (theme.photo_path ? savedThemePhoto(theme.id) : null))
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2110,7 +2266,14 @@ function ThemePhoto({ theme, onTodos }: { theme: ThemePhotoInfo; onTodos: (title
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {photoUri ? (
         <Pressable onPress={() => setFullPhoto(true)} accessibilityLabel="Show the photo full screen">
-          <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" />
+          {theme.photo_crop ? (
+            // The saved crop (Reposition thumbnail): the photo drawn large and shifted so the box shows just that part
+            <View style={[styles.listPhoto, styles.thumbBox]} onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+              {box ? <Image source={{ uri: photoUri }} style={[styles.thumbImage, thumbLayout(theme.photo_crop, box)]} /> : null}
+            </View>
+          ) : (
+            <Image source={{ uri: photoUri }} style={styles.listPhoto} resizeMode="contain" />
+          )}
         </Pressable>
       ) : null}
       {reading ? (
@@ -2134,6 +2297,10 @@ function ThemePhoto({ theme, onTodos }: { theme: ThemePhotoInfo; onTodos: (title
           <Text style={styles.doneButtonText}>Read photo</Text>
         </Pressable>
       ) : null}
+
+      <Modal visible={repositioning && !!photoUri} animationType="fade" onRequestClose={onCancelReposition}>
+        {photoUri ? <CropEditor uri={photoUri} crop={theme.photo_crop ?? null} onSave={onReposition} onCancel={onCancelReposition} /> : null}
+      </Modal>
 
       <Modal visible={fullPhoto} animationType="fade" onRequestClose={() => setFullPhoto(false)}>
         <View style={[styles.screenFill, styles.photoViewer]}>
@@ -4619,6 +4786,15 @@ const styles = StyleSheet.create({
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center' },
   listDivider: { borderBottomWidth: 1, borderBottomColor: c.line },
   listPhoto: { width: '100%', height: 260, borderRadius: 10, backgroundColor: c.line, marginBottom: 8 },
+  thumbBox: { overflow: 'hidden' },
+  thumbImage: { position: 'absolute' },
+  cropShade: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.6)' },
+  cropFrame: { position: 'absolute', borderWidth: 2, borderColor: '#ffffff', borderRadius: 10 },
+  cropHint: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#ffffff', fontSize: 16 },
+  cropButtons: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', gap: 8 },
+  cropButton: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
+  cropSave: { backgroundColor: c.accent },
+  cropButtonText: { fontSize: 16, fontWeight: '600', color: '#ffffff' },
   captureRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
   captureButton: {
     flex: 1,
