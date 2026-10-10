@@ -14,6 +14,7 @@ import {
   fromStored,
   lastDays,
   setDayStart,
+  paperOrder,
   placeSteps,
   dragSpan,
   sleepStretches,
@@ -1106,4 +1107,17 @@ test('a full day places fewer photo todos than asked', () => {
   setDayStart(5)
   // Room from 28 to 29 (5am) is two half hours
   assert.deepEqual(placeSteps([], 5, 0.5, true, 28), [28, 28.5])
+})
+
+test("Original lists a theme's steps in the paper's order, done or not, hand-added ones after", () => {
+  const steps = [
+    { title: 'by hand later', day: '2026-10-12', start: 9, position: null },
+    { title: 'third line', day: '2026-10-10', start: 9, position: 2 },
+    { title: 'by hand sooner', day: '2026-10-11', start: 9, position: null },
+    { title: 'first line', day: '2026-10-11', start: 15, position: 0 },
+  ]
+  assert.deepEqual(
+    paperOrder(steps).map((s) => s.title),
+    ['first line', 'third line', 'by hand sooner', 'by hand later'],
+  )
 })

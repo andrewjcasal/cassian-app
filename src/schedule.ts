@@ -907,3 +907,18 @@ export function placeSteps(items: CalItem[], count: number, length: number, isTo
   }
   return starts
 }
+
+// A theme page's Original view: every step, done or not, in the order it was
+// written on the photo's paper (theme_position); steps added by hand come after,
+// soonest first
+export function paperOrder<T extends { day: string; start: number; position?: number | null }>(steps: T[]) {
+  const when = (a: T, b: T) => (a.day === b.day ? a.start - b.start : a.day < b.day ? -1 : 1)
+  return [...steps].sort((a, b) => {
+    const pa = a.position ?? null
+    const pb = b.position ?? null
+    if (pa !== null && pb !== null) return pa - pb
+    if (pa !== null) return -1
+    if (pb !== null) return 1
+    return when(a, b)
+  })
+}

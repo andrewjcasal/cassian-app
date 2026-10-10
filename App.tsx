@@ -33,6 +33,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ListFilter,
   Clock,
   GripVertical,
   ImagePlus,
@@ -108,6 +109,7 @@ import {
   DAY_START,
   DEFAULT_DAY_START,
   setDayStart,
+  paperOrder,
   placeSteps,
   PHOTO_TODO_MINUTES,
   dragSpan,
@@ -521,7 +523,7 @@ function DayPage({
       supabase.from('cass_themes').select('id,title,sort_order,photo_path,photo_read_at').is('archived_at', null).order('sort_order'),
       supabase
         .from('cass_time_blocks')
-        .select('id,title,day,start_time,end_time,done,theme_id')
+        .select('id,title,day,start_time,end_time,done,theme_id,theme_position')
         .not('theme_id', 'is', null)
         .order('day', { ascending: false })
         .limit(500),
@@ -537,6 +539,7 @@ function DayPage({
         ...fromStored(b.day, b.start_time, b.end_time),
         done: b.done,
         themeId: b.theme_id as string,
+        position: b.theme_position,
       })),
     )
   }, [])
@@ -632,7 +635,15 @@ function DayPage({
       const starts = placeSteps(dayItems, left.length, length, k === 0, nowHours())
       if (starts.length) {
         const { error } = await supabase.from('cass_time_blocks').insert(
-          starts.map((start, n) => ({ ...toStored(d, start, start + length), title: left[n], kind: 'personal', source: 'app', theme_id: themeId })),
+          starts.map((start, n) => ({
+            ...toStored(d, start, start + length),
+            title: left[n],
+            kind: 'personal',
+            source: 'app',
+            theme_id: themeId,
+            // Its line on the paper, for the Original view
+            theme_position: titles.length - left.length + n,
+          })),
         )
         if (error) return setError(error.message)
       }
@@ -1885,7 +1896,8 @@ function ScreenHeader({
   )
 }
 
-type ThemeStep = { id: string; title: string; day: string; start: number; end: number; done: boolean; themeId: string }
+// position: its line on the theme's photo (null when added by hand)
+type ThemeStep = { id: string; title: string; day: string; start: number; end: number; done: boolean; themeId: string; position?: number | null }
 
 // "Today · 2:28pm" or "Thu, Oct 8 · 10am" for a theme's next step
 function whenLabel(day: string, start: number, today: string) {
@@ -1911,6 +1923,10 @@ function ThemeSteps({
   const [draft, setDraft] = useState('')
   // Open by default; the header still folds it
   const [showDone, setShowDone] = useState(true)
+  // Incomplete: the open steps soonest first, done ones below under DONE.
+  // Original: every step as written on the photo's paper (paperOrder).
+  const [view, setView] = useState<'incomplete' | 'original'>('incomplete')
+  const [pickingView, setPickingView] = useState(false)
   const byWhen = (a: ThemeStep, b: ThemeStep) => (a.day === b.day ? a.start - b.start : a.day < b.day ? -1 : 1)
   const open = steps.filter((st) => !st.done).sort(byWhen)
   const done = steps.filter((st) => st.done).sort((a, b) => byWhen(b, a))
@@ -1922,16 +1938,42 @@ function ThemeSteps({
   }
   return (
     <>
-      <Text style={styles.sectionLabel}>NEXT STEPS</Text>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={[styles.sectionLabel, { flex: 1 }]}>NEXT STEPS</Text>
+        <Pressable style={styles.viewPicker} onPress={() => setPickingView(!pickingView)} hitSlop={8} accessibilityLabel="View type">
+          <ListFilter size={14} color={c.accent} />
+          <Text style={styles.viewPickerText}>{view === 'original' ? 'Original' : 'Incomplete'}</Text>
+          <ChevronDown size={14} color={c.accent} />
+        </Pressable>
+      </View>
+      {pickingView ? (
+        <View style={[styles.card, styles.viewMenu]}>
+          {(['incomplete', 'original'] as const).map((v) => (
+            <Pressable
+              key={v}
+              style={[styles.dropdownItem, view === v && styles.segmentItemActive]}
+              onPress={() => {
+                setView(v)
+                setPickingView(false)
+              }}
+            >
+              <Text style={[styles.dropdownText, view === v && styles.segmentTextActive]}>
+                {v === 'original' ? 'Original (as on the paper)' : 'Incomplete'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.card}>
-        {open.map((st) => (
+        {(view === 'original' ? paperOrder(steps) : open).map((st) => (
           <Pressable key={st.id} style={styles.todoRow} onPress={() => onOpen(st)}>
-            <Text style={[styles.todoText, { flex: 1 }]}>{st.title}</Text>
+            {view === 'original' ? st.done ? <CircleCheck size={18} color={c.accent} /> : <Circle size={18} color={c.muted} /> : null}
+            <Text style={[styles.todoText, { flex: 1 }, st.done && styles.todoDoneText]}>{st.title}</Text>
             <Text style={styles.minutesLabel}>{whenLabel(st.day, st.start, today)}</Text>
             <ChevronRight size={18} color={c.muted} />
           </Pressable>
         ))}
-        <View style={[styles.addRow, open.length > 0 && styles.addRowDivider]}>
+        <View style={[styles.addRow, (view === 'original' ? steps.length : open.length) > 0 && styles.addRowDivider]}>
           <TextInput
             style={styles.addInput}
             value={draft}
@@ -1946,7 +1988,8 @@ function ThemeSteps({
           </Pressable>
         </View>
       </View>
-      {done.length ? (
+      {/* Original already lists the done steps in place */}
+      {done.length && view === 'incomplete' ? (
         <>
           <Pressable style={styles.sectionHeaderRow} onPress={() => setShowDone(!showDone)} accessibilityState={{ expanded: showDone }}>
             <Text style={[styles.sectionLabel, { flex: 1 }]}>DONE ({done.length})</Text>
@@ -4633,6 +4676,9 @@ const styles = StyleSheet.create({
   dropdownText: { fontSize: 16, color: c.ink },
   dropdownList: { maxHeight: 200, borderWidth: 1, borderColor: c.line, borderRadius: 6 },
   dropdownItem: { paddingVertical: 8, paddingHorizontal: 10 },
+  viewPicker: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  viewPickerText: { fontSize: 14, fontWeight: '600', color: c.accent },
+  viewMenu: { marginBottom: 6 },
   detailBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', padding: 16 },
   detailCard: { backgroundColor: c.card, borderRadius: 12, padding: 16, gap: 8 },
   detailTitle: { fontSize: 20, fontWeight: '600', color: c.ink },
