@@ -4,13 +4,13 @@ import assert from 'node:assert/strict'
 import { cleanTranscribed } from '../supabase/functions/_shared/todoLists.ts'
 
 test('Transcribed todos lose the bullets, boxes and numbers written on the paper', () => {
-  assert.deepEqual(cleanTranscribed(['- Call Hailey', '• Groceries', '[ ] Cable organizing', '[x] Laundry', '2. Pay rent', '3) Email Dante']), [
-    'Call Hailey',
+  assert.deepEqual(cleanTranscribed(['- Call the dentist', '• Groceries', '[ ] Cable organizing', '[x] Laundry', '2. Pay rent', '3) Email a client']), [
+    'Call the dentist',
     'Groceries',
     'Cable organizing',
     'Laundry',
     'Pay rent',
-    'Email Dante',
+    'Email a client',
   ])
 })
 

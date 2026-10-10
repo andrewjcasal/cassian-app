@@ -459,9 +459,9 @@ test('switchRoutine puts a one-off in now, counting down from 5 minutes, then ba
     { name: 'Puzzles', minutes: null },
   ]
   const running = routineFrom(routine, 'Dishwasher')
-  const next = switchRoutine(routine, running, 1, { oneOff: 'Reply to Mehran' })
+  const next = switchRoutine(routine, running, 1, { oneOff: 'Reply to a client' })
   assert.deepEqual(next, [
-    { name: 'Reply to Mehran', minutes: 5, oneOff: true },
+    { name: 'Reply to a client', minutes: 5, oneOff: true },
     { name: 'Empty sink', minutes: 5 },
     { name: 'Puzzles', minutes: null },
   ])
