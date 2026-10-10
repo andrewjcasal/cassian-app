@@ -784,6 +784,12 @@ function DayPage({
     agendaScroll.current?.scrollTo({ y: (hour - DAY_START) * HOUR_PX, animated: false })
   }, [tab, day, today])
 
+  // The Todos pages share the Agenda's scroll view, so they'd open at the Agenda's
+  // scroll position (near now); each one starts at the top instead
+  useEffect(() => {
+    if (tab === 'todos') agendaScroll.current?.scrollTo({ y: 0, animated: false })
+  }, [tab, allTodos, openThemeId])
+
   // Today and yesterday are fetched as soon as the app opens
   useEffect(() => {
     loadDay(today)
