@@ -1082,3 +1082,10 @@ test('a drag stays inside the day', () => {
   assert.deepEqual(dragSpan(4, 6), { start: 5, minutes: 60 })
   assert.deepEqual(dragSpan(28, 30), { start: 28, minutes: 60 })
 })
+
+test('a night with every stretch removed saves nothing', () => {
+  setDayStart(5)
+  const r = sleepStretches([])
+  assert.deepEqual(r, { stretches: [] })
+  assert.deepEqual(sleepRows('2026-10-10', []), [])
+})

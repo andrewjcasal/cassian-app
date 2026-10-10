@@ -2901,6 +2901,7 @@ function SleepCard({
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [key]: hours } : r)))
   const addRow = () =>
     setRows((rs) => {
+      if (!rs.length) return [{ sleep: 23, wake: 7 }]
       const from = (rs[rs.length - 1].wake + 0.5) % 24
       return [...rs, { sleep: from, wake: (from + 1) % 24 }]
     })
@@ -2927,13 +2928,21 @@ function SleepCard({
             <Pressable onPress={addRow} hitSlop={8} accessibilityLabel="Add another sleep and wake">
               <Plus size={18} color={c.accent} />
             </Pressable>
-          ) : (
-            <Pressable onPress={() => setRows((rs) => rs.filter((_, j) => j !== i))} hitSlop={8} accessibilityLabel="Remove this stretch">
-              <X size={18} color={c.muted} />
-            </Pressable>
-          )}
+          ) : null}
+          {/* Removing every stretch and saving clears the night */}
+          <Pressable onPress={() => setRows((rs) => rs.filter((_, j) => j !== i))} hitSlop={8} accessibilityLabel="Remove this stretch">
+            <X size={18} color={c.muted} />
+          </Pressable>
         </View>
       ))}
+      {rows.length ? null : (
+        <View style={styles.sleepRow}>
+          <Text style={[styles.sliderLabel, { flex: 1 }]}>No sleep logged</Text>
+          <Pressable onPress={addRow} hitSlop={8} accessibilityLabel="Add a sleep and wake">
+            <Plus size={18} color={c.accent} />
+          </Pressable>
+        </View>
+      )}
       <Pressable style={styles.submitButton} onPress={() => onSave(rows)}>
         <Text style={styles.doneButtonText}>Save</Text>
       </Pressable>
