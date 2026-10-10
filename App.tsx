@@ -362,6 +362,10 @@ function DayPage({
   const todos = byDay[day]?.todos ?? []
   // Today only: unfinished todos (not habits) from earlier days
   const overdue = day === today ? (byDay[day]?.overdue ?? []) : []
+  // The day's finished todos and habits, earliest first (routine steps aren't todos)
+  const completedTodos = items
+    .filter((it) => it.kind === 'block' && it.done && !it.processId && (it.source === 'app' || it.source === 'habit'))
+    .sort((x, y) => x.start - y.start)
   // Every todo a card can act on, overdue ones included
   const cardTodos = [...todos, ...overdue]
   // Per day, only the latest load may write, so a slow older response can't land
@@ -375,6 +379,9 @@ function DayPage({
   useEffect(() => setAllTodos(false), [tab, day])
   const shownTodos = allTodos ? todos : todos.slice(0, TODO_PREVIEW)
   const splitAdd = !allTodos && todos.length > TODO_PREVIEW
+  // Show completed (above the list): the day's finished todos and habits, from the
+  // blocks already loaded for the agenda, listed under the unfinished ones
+  const [showCompleted, setShowCompleted] = useState(false)
   const [menu, setMenu] = useState<Menu | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   // Swiping sideways on the agenda moves a day (swipeDays: left is the next day).
@@ -1364,8 +1371,20 @@ function DayPage({
                     </Pressable>
                   ))}
                 </View>
-                <Text style={styles.sectionLabel}>TODAY</Text>
               </>
+            ) : null}
+            {tab === 'todos' && !openTheme ? (
+              <View style={styles.sectionHeaderRow}>
+                <Text style={[styles.sectionLabel, { flex: 1 }]}>{!allTodos && overdue.length ? 'TODAY' : ''}</Text>
+                <Pressable
+                  onPress={() => setShowCompleted(!showCompleted)}
+                  hitSlop={8}
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: showCompleted }}
+                >
+                  <Text style={styles.viewAll}>{showCompleted ? 'Hide completed' : 'Show completed'}</Text>
+                </Pressable>
+              </View>
             ) : null}
             {tab === 'todos' && openTheme ? null : tab === 'todos' ? (
               // With a "View all" row, the list and "Add a todo" are two cards; otherwise one.
@@ -1382,6 +1401,19 @@ function DayPage({
                   onDragging={setDragging}
                   onOpen={(t) => setDetail({ id: t.id, from: 'todo', title: t.title, day: t.day, start: t.start, end: t.end, done: false, fixed: !!t.fixed, event: false, habitId: t.habitId ?? null, themeId: t.themeId ?? null })}
                 />
+                {showCompleted
+                  ? completedTodos.map((it, k) => (
+                      <Pressable
+                        key={it.id}
+                        style={[styles.todoRow, (k > 0 || shownTodos.length > 0) && styles.addRowDivider]}
+                        onPress={() => setDetail({ id: it.id, from: 'item', title: it.title, day, start: it.start, end: it.end, done: true, fixed: !!it.fixed, event: false, habitId: it.habitId ?? null, themeId: it.themeId ?? null })}
+                      >
+                        <CircleCheck size={18} color={c.accent} />
+                        <Text style={[styles.todoText, styles.todoDoneText, { flex: 1 }]}>{it.title}</Text>
+                        <Text style={styles.minutesLabel}>{clock(it.start)}</Text>
+                      </Pressable>
+                    ))
+                  : null}
                 {!allTodos && todos.length > TODO_PREVIEW ? (
                   <Pressable style={[styles.viewAllRow, styles.addRowDivider]} onPress={() => setAllTodos(true)} hitSlop={4}>
                     <Text style={[styles.viewAll, { flex: 1, paddingTop: 0 }]}>
